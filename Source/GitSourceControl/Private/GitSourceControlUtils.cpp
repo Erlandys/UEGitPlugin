@@ -1464,7 +1464,7 @@ bool GetAllLocks(const FString& InRepositoryRoot, const FString& GitBinaryFallba
 	// as you will see below, we use only for offline cases, but the exec cost of doing this isn't worth it
 	// when we can easily maintain this cache here. So, we are really emulating an internal Git LFS locks cache
 	// call, which gets fed into the state cache, rather than reimplementing the state cache :)
-	const FDateTime CurrentTime = FDateTime::Now();
+	/*const FDateTime CurrentTime = FDateTime::Now();
 	bool bCacheExpired = bInvalidateCache;
 	if (!bInvalidateCache)
 	{
@@ -1548,7 +1548,8 @@ bool GetAllLocks(const FString& InRepositoryRoot, const FString& GitBinaryFallba
 		OutLocks = FGitLockedFilesCache::GetLockedFiles();
 		bResult = true;
 	}
-	return bResult;
+	return bResult;*/
+	return true;
 }
 
 void GetLockedFiles(const TArray<FString>& InFiles, TArray<FString>& OutFiles)
