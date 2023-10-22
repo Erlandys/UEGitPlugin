@@ -2295,7 +2295,7 @@ bool PullOrigin(const FString& InPathToGitBinary, const FString& InPathToReposit
 	TArray<UPackage*> PackagesToReload;
 	if (bShouldReload)
 	{
-		const auto PackagesToReloadResult = Async(EAsyncExecution::TaskGraphMainThread, [=] {
+		const auto PackagesToReloadResult = Async(EAsyncExecution::TaskGraphMainThread, [Files] {
 			return UnlinkPackages(Files);
 		});
 		PackagesToReload = PackagesToReloadResult.Get();
@@ -2308,7 +2308,7 @@ bool PullOrigin(const FString& InPathToGitBinary, const FString& InPathToReposit
 
 	if (bShouldReload)
 	{
-		const auto ReloadPackagesResult = Async(EAsyncExecution::TaskGraphMainThread, [=] {
+		const auto ReloadPackagesResult = Async(EAsyncExecution::TaskGraphMainThread, [PackagesToReload] {
 			TArray<UPackage*> Packages = PackagesToReload;
 			ReloadPackages(Packages);
 		});
