@@ -305,7 +305,7 @@ bool FGitCheckInWorker::Execute(FGitSourceControlCommand& InCommand)
 																				   "open, files cannot always be updated.\n\n"
 																				   "Please exit the editor, and update the project again."));
 							FText PushFailTitle(LOCTEXT("GitPush_OutOfDate_Title", "Git Pull Required"));
-							FMessageDialog::Open(EAppMsgType::Ok, PushFailMessage, &PushFailTitle);
+							FMessageDialog::Open(EAppMsgType::Ok, PushFailMessage, PushFailTitle);
 							UE_LOG(LogSourceControl, Log, TEXT("Push failed because we're out of date, prompting user to resolve manually"));
 						}
 					}

@@ -2235,7 +2235,7 @@ bool PullOrigin(const FString& InPathToGitBinary, const FString& InPathToReposit
 																	"differences.\n\n"
 																	"Please exit the editor, and update the project."));
 		FText PullFailTitle(LOCTEXT("Git_NeedBinariesUpdate_Title", "Binaries Update Required"));
-		FMessageDialog::Open(EAppMsgType::Ok, PullFailMessage, &PullFailTitle);
+		FMessageDialog::Open(EAppMsgType::Ok, PullFailMessage, PullFailTitle);
 		UE_LOG(LogSourceControl, Log, TEXT("Pull failed because we need a binaries update"));
 		return false;
 	}
