@@ -25,6 +25,7 @@
 #include "Misc/Paths.h"
 #include "ISourceControlModule.h"
 #include "GitSourceControlModule.h"
+#include "GitSourceControlChangelistState.h"
 #include "Logging/MessageLog.h"
 #include "Misc/DateTime.h"
 #include "Misc/ScopeLock.h"
@@ -33,6 +34,7 @@
 #include "PackageTools.h"
 #include "FileHelpers.h"
 #include "Misc/MessageDialog.h"
+#include "UObject/ObjectSaveContext.h"
 
 #include "Async/Async.h"
 #include "UObject/Linker.h"
@@ -145,7 +147,11 @@ namespace GitSourceControlUtils
 				FString GitTestPath = TestPath + "/.git";
 				if (FPaths::FileExists(GitTestPath) || FPaths::DirectoryExists(GitTestPath))
 				{
-					if (Ret != PathToRepositoryRoot && Ret != TestPath)
+					FString RetNormalized = Ret;
+					FPaths::NormalizeDirectoryName(RetNormalized);
+					FString PathToRepositoryRootNormalized = PathToRepositoryRoot;
+					FPaths::NormalizeDirectoryName(PathToRepositoryRootNormalized);
+					if (!FPaths::IsSamePath(RetNormalized, PathToRepositoryRootNormalized) && Ret != GitTestPath)
 					{
 						UE_LOG(LogSourceControl, Error, TEXT("Selected files belong to different submodules"));
 						return PathToRepositoryRoot;
@@ -350,6 +356,30 @@ FString FindGitBinaryPath()
 	{
 		GitBinaryPath = TEXT("C:/Program Files (x86)/fournova/Tower/vendor/Git/bin/git.exe");
 		bFound = CheckGitAvailability(GitBinaryPath);
+	}
+
+	// 6) Else, look for the PortableGit provided by Fork
+	if (!bFound)
+	{
+		// The latest Fork adds its binaries into the local appdata directory:
+		// C:\Users\UserName\AppData\Local\Fork\gitInstance\2.39.1\cmd
+		const FString AppDataLocalPath = FPlatformMisc::GetEnvironmentVariable(TEXT("LOCALAPPDATA"));
+		const FString SearchPath = FString::Printf(TEXT("%s/Fork/gitInstance/*"), *AppDataLocalPath);
+		TArray<FString> PortableGitFolders;
+		IFileManager::Get().FindFiles(PortableGitFolders, *SearchPath, false, true);
+		if (PortableGitFolders.Num() > 0)
+		{
+			// FindFiles just returns directory names, so we need to prepend the root path to get the full path.
+			GitBinaryPath = FString::Printf(TEXT("%s/Fork/gitInstance/%s/cmd/git.exe"), *AppDataLocalPath, *(PortableGitFolders.Last())); // keep only the last PortableGit found
+			bFound = CheckGitAvailability(GitBinaryPath);
+			if (!bFound)
+			{
+				// If Portable git is not found in "cmd/" subdirectory, try the "bin/" path that was in use before
+				GitBinaryPath = FString::Printf(TEXT("%s/Fork/gitInstance/%s/bin/git.exe"), *AppDataLocalPath, *(PortableGitFolders.Last())); // keep only the last
+																																	// PortableGit found
+				bFound = CheckGitAvailability(GitBinaryPath);
+			}
+		}
 	}
 
 #elif PLATFORM_MAC
@@ -1051,11 +1081,28 @@ public:
 	/** Parse the unmerge status: extract the base SHA1 identifier of the file */
 	FGitConflictStatusParser(const TArray<FString>& InResults)
 	{
-		const FString& FirstResult = InResults[0]; // 1: The common ancestor of merged branches
-		CommonAncestorFileId = FirstResult.Mid(7, 40);
+		const FString& CommonAncestor = InResults[0]; // 1: The common ancestor of merged branches
+		CommonAncestorFileId = CommonAncestor.Mid(7, 40);
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 3
+		CommonAncestorFileId = CommonAncestor.Mid(7, 40);
+		CommonAncestorFilename = CommonAncestor.Right(50);
+
+		if (ensure(InResults.IsValidIndex(2)))
+		{
+			const FString& RemoteBranch = InResults[2]; // 1: The common ancestor of merged branches
+			RemoteFileId = RemoteBranch.Mid(7, 40);
+			RemoteFilename = RemoteBranch.Right(50);
+		}
+#endif
 	}
 
 	FString CommonAncestorFileId; ///< SHA1 Id of the file (warning: not the commit Id)
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 3
+	FString RemoteFileId;		///< SHA1 Id of the file (warning: not the commit Id)
+
+	FString CommonAncestorFilename;
+	FString RemoteFilename;
+#endif
 };
 
 /** Execute a command to get the details of a conflict */
@@ -1072,7 +1119,14 @@ static void RunGetConflictStatus(const FString& InPathToGitBinary, const FString
 	{
 		// Parse the unmerge status: extract the base revision (or the other branch?)
 		FGitConflictStatusParser ConflictStatus(Results);
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 3
+		InOutFileState.PendingResolveInfo.BaseFile = ConflictStatus.CommonAncestorFilename;
+		InOutFileState.PendingResolveInfo.BaseRevision = ConflictStatus.CommonAncestorFileId;
+		InOutFileState.PendingResolveInfo.RemoteFile = ConflictStatus.RemoteFilename;
+		InOutFileState.PendingResolveInfo.RemoteRevision = ConflictStatus.RemoteFileId;
+#else
 		InOutFileState.PendingMergeBaseFileHash = ConflictStatus.CommonAncestorFileId;
+#endif
 	}
 }
 
@@ -1464,7 +1518,7 @@ bool GetAllLocks(const FString& InRepositoryRoot, const FString& GitBinaryFallba
 	// as you will see below, we use only for offline cases, but the exec cost of doing this isn't worth it
 	// when we can easily maintain this cache here. So, we are really emulating an internal Git LFS locks cache
 	// call, which gets fed into the state cache, rather than reimplementing the state cache :)
-	/*const FDateTime CurrentTime = FDateTime::Now();
+	const FDateTime CurrentTime = FDateTime::Now();
 	bool bCacheExpired = bInvalidateCache;
 	if (!bInvalidateCache)
 	{
@@ -1548,8 +1602,7 @@ bool GetAllLocks(const FString& InRepositoryRoot, const FString& GitBinaryFallba
 		OutLocks = FGitLockedFilesCache::GetLockedFiles();
 		bResult = true;
 	}
-	return bResult;*/
-	return true;
+	return bResult;
 }
 
 void GetLockedFiles(const TArray<FString>& InFiles, TArray<FString>& OutFiles)
@@ -1569,6 +1622,57 @@ void GetLockedFiles(const TArray<FString>& InFiles, TArray<FString>& OutFiles)
 	}
 }
 
+FString GetFullPathFromGitStatus(const FString& Result, const FString& InRepositoryRoot)
+{
+	const FString& RelativeFilename = FilenameFromGitStatus(Result);
+	FString File = FPaths::ConvertRelativePathToFull(InRepositoryRoot, RelativeFilename);
+	return File;
+}
+
+bool UpdateChangelistStateByCommand()
+{
+	FGitSourceControlModule& GitSourceControl = FModuleManager::GetModuleChecked<FGitSourceControlModule>("GitSourceControl");
+	FGitSourceControlProvider& Provider = GitSourceControl.GetProvider();
+	if (!Provider.IsGitAvailable())
+	{
+		return false;
+	}
+	TSharedRef<FGitSourceControlChangelistState, ESPMode::ThreadSafe> StagedChangelist = Provider.GetStateInternal(FGitSourceControlChangelist::StagedChangelist);
+	TSharedRef<FGitSourceControlChangelistState, ESPMode::ThreadSafe> WorkingChangelist = Provider.GetStateInternal(FGitSourceControlChangelist::WorkingChangelist);
+	StagedChangelist->Files.RemoveAll([](const FSourceControlStateRef& InState){ return true; });
+	WorkingChangelist->Files.RemoveAll([](const FSourceControlStateRef& InState){ return true; });
+
+	TArray<FString> Files;
+	Files.Add(TEXT("Content/"));
+	TArray<FString> Parameters;
+	Parameters.Add(TEXT("--porcelain"));
+	TArray<FString> Results;
+	TArray<FString> ErrorMsg;
+	const bool bResult = RunCommand(TEXT("--no-optional-locks status"), Provider.GetGitBinaryPath(), Provider.GetPathToRepositoryRoot(), Parameters, Files, Results, ErrorMsg);
+	for (const auto& Result : Results)
+	{
+		FString File = GetFullPathFromGitStatus(Result, Provider.GetPathToRepositoryRoot());
+		TSharedRef<FGitSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(File);
+		// Staged check
+		if (!TChar<TCHAR>::IsWhitespace(Result[0]))
+		{
+			WorkingChangelist->Files.Remove(State);
+			UpdateFileStagingOnSavedInternal(Result);
+			State->Changelist = FGitSourceControlChangelist::StagedChangelist;
+			StagedChangelist->Files.AddUnique(State);
+			continue;
+		}
+		// Working check
+		if (!TChar<TCHAR>::IsWhitespace(Result[1]))
+		{
+			StagedChangelist->Files.Remove(State);
+			State->Changelist = FGitSourceControlChangelist::WorkingChangelist;
+			WorkingChangelist->Files.AddUnique(State);
+		}
+	}
+	return true;
+}
+	
 // Run a batch of Git "status" command to update status of given files and/or directories.
 bool RunUpdateStatus(const FString& InPathToGitBinary, const FString& InRepositoryRoot, const bool InUsingLfsLocking, const TArray<FString>& InFiles,
 					 TArray<FString>& OutErrorMessages, TMap<FString, FGitSourceControlState>& OutStates)
@@ -1599,10 +1703,53 @@ bool RunUpdateStatus(const FString& InPathToGitBinary, const FString& InReposito
 	{
 		ParseStatusResults(InPathToGitBinary, InRepositoryRoot, InUsingLfsLocking, RepoFiles, ResultsMap, OutStates);
 	}
+	
+	UpdateChangelistStateByCommand();
 
 	CheckRemote(InPathToGitBinary, InRepositoryRoot, RepoFiles, OutErrorMessages, OutStates);
 
 	return bResult;
+}
+
+void UpdateFileStagingOnSaved(const FString& Filename, UPackage* Pkg, FObjectPostSaveContext ObjectSaveContext)
+{
+	UpdateFileStagingOnSavedInternal(Filename);
+}
+	
+bool UpdateFileStagingOnSavedInternal(const FString& Filename)
+{
+	bool bResult = false;
+	FGitSourceControlModule& GitSourceControl = FModuleManager::GetModuleChecked<FGitSourceControlModule>("GitSourceControl");
+	FGitSourceControlProvider& Provider = GitSourceControl.GetProvider();
+	if (!Provider.IsGitAvailable())
+	{
+		return bResult;
+	}
+	TSharedRef<FGitSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(Filename);
+
+	if (State->Changelist.GetName().Equals(TEXT("Staged")))
+	{
+		TArray<FString> File;
+		File.Add(Filename);
+		TArray<FString> DummyResults;
+		TArray<FString> DummyMsgs;
+		bResult = RunCommand(TEXT("add"), Provider.GetGitBinaryPath(), Provider.GetPathToRepositoryRoot(), FGitSourceControlModule::GetEmptyStringArray(), File, DummyResults, DummyMsgs);
+	}
+	
+	return bResult;
+}
+	
+void UpdateStateOnAssetRename(const FAssetData& InAssetData, const FString& InOldName)
+{
+	FGitSourceControlModule& GitSourceControl = FModuleManager::GetModuleChecked<FGitSourceControlModule>("GitSourceControl");
+	FGitSourceControlProvider& Provider = GitSourceControl.GetProvider();
+	if (!Provider.IsGitAvailable())
+	{
+		return ;
+	}
+	TSharedRef<FGitSourceControlState, ESPMode::ThreadSafe> State = Provider.GetStateInternal(InOldName);	
+	
+	State->LocalFilename = InAssetData.GetObjectPathString();
 }
 
 // Run a Git `cat-file --filters` command to dump the binary content of a revision into a file.
@@ -2235,7 +2382,11 @@ bool PullOrigin(const FString& InPathToGitBinary, const FString& InPathToReposit
 																	"differences.\n\n"
 																	"Please exit the editor, and update the project."));
 		FText PullFailTitle(LOCTEXT("Git_NeedBinariesUpdate_Title", "Binaries Update Required"));
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 3
 		FMessageDialog::Open(EAppMsgType::Ok, PullFailMessage, PullFailTitle);
+#else		
+		FMessageDialog::Open(EAppMsgType::Ok, PullFailMessage, &PullFailTitle);
+#endif
 		UE_LOG(LogSourceControl, Log, TEXT("Pull failed because we need a binaries update"));
 		return false;
 	}

@@ -28,7 +28,6 @@
 #include "SourceControlOperations.h"
 #include "GitSourceControlModule.h"
 #include "GitSourceControlUtils.h"
-#include "Runtime/Launch/Resources/Version.h"
 
 
 #define LOCTEXT_NAMESPACE "SGitSourceControlSettings"

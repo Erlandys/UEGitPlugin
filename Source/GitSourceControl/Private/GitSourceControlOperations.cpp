@@ -305,7 +305,11 @@ bool FGitCheckInWorker::Execute(FGitSourceControlCommand& InCommand)
 																				   "open, files cannot always be updated.\n\n"
 																				   "Please exit the editor, and update the project again."));
 							FText PushFailTitle(LOCTEXT("GitPush_OutOfDate_Title", "Git Pull Required"));
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 3
 							FMessageDialog::Open(EAppMsgType::Ok, PushFailMessage, PushFailTitle);
+#else
+							FMessageDialog::Open(EAppMsgType::Ok, PushFailMessage, &PushFailTitle);
+#endif
 							UE_LOG(LogSourceControl, Log, TEXT("Push failed because we're out of date, prompting user to resolve manually"));
 						}
 					}
@@ -541,8 +545,9 @@ bool FGitRevertWorker::Execute(FGitSourceControlCommand& InCommand)
 		}
 		if (AllExistingFiles.Num() > 0)
 		{
-			// reset any changes already added to the index
+			// reset and revert any changes already added to the index
 			InCommand.bCommandSuccessful &= GitSourceControlUtils::RunCommand(TEXT("reset"), InCommand.PathToGitBinary, InCommand.PathToRepositoryRoot, FGitSourceControlModule::GetEmptyStringArray(), AllExistingFiles, InCommand.ResultInfo.InfoMessages, InCommand.ResultInfo.ErrorMessages);
+			InCommand.bCommandSuccessful &= GitSourceControlUtils::RunCommand(TEXT("checkout"), InCommand.PathToGitBinary, InCommand.PathToRepositoryRoot, FGitSourceControlModule::GetEmptyStringArray(), AllExistingFiles, InCommand.ResultInfo.InfoMessages, InCommand.ResultInfo.ErrorMessages);
 		}
 		if (OtherThanAddedExistingFiles.Num() > 0)
 		{
@@ -849,6 +854,56 @@ bool FGitResolveWorker::Execute( class FGitSourceControlCommand& InCommand )
 bool FGitResolveWorker::UpdateStates() const
 {
 	return GitSourceControlUtils::UpdateCachedStates(States);
+}
+
+FName FGitMoveToChangelistWorker::GetName() const
+{
+	return "MoveToChangelist";
+}
+
+bool FGitMoveToChangelistWorker::UpdateStates() const
+{
+	return true;
+}
+
+bool FGitMoveToChangelistWorker::Execute(FGitSourceControlCommand& InCommand)
+{
+	check(InCommand.Operation->GetName() == GetName());
+
+	FGitSourceControlChangelist DestChangelist = InCommand.Changelist;
+	bool bResult = false;
+	if(DestChangelist.GetName().Equals(TEXT("Staged")))
+	{
+		bResult = GitSourceControlUtils::RunCommand(TEXT("add"), InCommand.PathToGitBinary, InCommand.PathToRepositoryRoot, FGitSourceControlModule::GetEmptyStringArray(), InCommand.Files, InCommand.ResultInfo.InfoMessages, InCommand.ResultInfo.ErrorMessages);
+	}
+	else if(DestChangelist.GetName().Equals(TEXT("Working")))
+	{
+		TArray<FString> Parameter;
+		Parameter.Add(TEXT("--staged"));
+		bResult = GitSourceControlUtils::RunCommand(TEXT("restore"), InCommand.PathToGitBinary, InCommand.PathToRepositoryRoot, Parameter, InCommand.Files, InCommand.ResultInfo.InfoMessages, InCommand.ResultInfo.ErrorMessages);
+	}
+	
+	if (bResult)
+	{
+		TMap<FString, FGitSourceControlState> DummyStates;
+		GitSourceControlUtils::RunUpdateStatus(InCommand.PathToGitBinary, InCommand.PathToRepositoryRoot, InCommand.bUsingGitLfsLocking, InCommand.Files, InCommand.ResultInfo.InfoMessages, DummyStates);
+	}
+	return bResult;
+}
+
+FName FGitUpdateStagingWorker::GetName() const
+{
+	return "UpdateChangelistsStatus";
+}
+
+bool FGitUpdateStagingWorker::Execute(FGitSourceControlCommand& InCommand)
+{
+	return GitSourceControlUtils::UpdateChangelistStateByCommand();
+}
+
+bool FGitUpdateStagingWorker::UpdateStates() const
+{
+	return true;
 }
 
 #undef LOCTEXT_NAMESPACE

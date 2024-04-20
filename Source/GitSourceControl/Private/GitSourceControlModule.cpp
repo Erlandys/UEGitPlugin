@@ -51,6 +51,8 @@ void FGitSourceControlModule::StartupModule()
 	GitSourceControlProvider.RegisterWorker( "CheckIn", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitCheckInWorker> ) );
 	GitSourceControlProvider.RegisterWorker( "Copy", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitCopyWorker> ) );
 	GitSourceControlProvider.RegisterWorker( "Resolve", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitResolveWorker> ) );
+	GitSourceControlProvider.RegisterWorker( "MoveToChangelist", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitMoveToChangelistWorker> ) );
+	GitSourceControlProvider.RegisterWorker( "UpdateChangelistsStatus", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitUpdateStagingWorker> ) );
 
 	// load our settings
 	GitSourceControlSettings.LoadSettings();
@@ -192,7 +194,11 @@ void FGitSourceControlModule::DiffAgainstOriginBranch( UObject * InObject, const
 	{
 		// Get the file name of package
 		FString RelativeFileName;
+#if ENGINE_MAJOR_VERSION >= 5
 		if (FPackageName::DoesPackageExist(InPackagePath, &RelativeFileName))
+#else
+		if (FPackageName::DoesPackageExist(InPackagePath, nullptr, &RelativeFileName))
+#endif
 		{
 			// if(SourceControlState->GetHistorySize() > 0)
 			{
