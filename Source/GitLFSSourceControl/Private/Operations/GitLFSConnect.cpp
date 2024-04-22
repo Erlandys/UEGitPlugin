@@ -47,7 +47,11 @@ bool FGitLFSConnectWorker::Execute(FGitLFSSourceControlCommand& Command, FGitLFS
 	// Check if remote matches our refs.
 	// Could be useful in the future, but all we want to know right now is if connection is up.
 	// Parameters.Add("--exit-code");
-	Command.bCommandSuccessful = Helpers.RunLSRemote(false, true);
+	// Command.bCommandSuccessful = Helpers.RunLSRemote(false, true);
+
+	// Status is faster than ls-remote
+	TArray<FString> Output, Errors;
+	Command.bCommandSuccessful = Helpers.GetStatusNoLocks(false, {}, Output, Errors);
 
 	if (!Command.bCommandSuccessful)
 	{

@@ -112,13 +112,11 @@ void FGitLFSSourceControlRunner::Stop()
 
 void FGitLFSSourceControlRunner::OnSourceControlOperationComplete(const FSourceControlOperationRef& InOperation, ECommandResult::Type InResult, TWeakPtr<int32> WeakReference)
 {
-	UE_LOG(LogTemp, Warning, TEXT("1. Operation Complete"));
 	// We want to be sure, that Runner is not destroyed yet
 	if (!ensure(WeakReference.Pin()))
 	{
 		return;
 	}
-	UE_LOG(LogTemp, Warning, TEXT("2. Operation Complete"));
 
 	// Mark task as done
 	bRefreshSpawned = false;

@@ -63,6 +63,7 @@ public:
 	{
 		return *StaticCastSharedRef<T>(Operation);
 	}
+
 public:
 	/** Path to the Git binary */
 	FString PathToGitBinary;
