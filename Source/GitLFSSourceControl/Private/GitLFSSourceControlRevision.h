@@ -6,36 +6,88 @@
 #pragma once
 
 #include "ISourceControlRevision.h"
-#include "Runtime/Launch/Resources/Version.h"
-#include "Misc/DateTime.h"
+#include "GitLFSSourceControlHelpers.h"
 
 /** Revision of a file, linked to a specific commit */
 class FGitLFSSourceControlRevision : public ISourceControlRevision
 {
 public:
-	/** ISourceControlRevision interface */
-#if ENGINE_MAJOR_VERSION >= 5
-	virtual bool Get( FString& InOutFilename, EConcurrency::Type InConcurrency = EConcurrency::Synchronous ) const override;
-#else
-	virtual bool Get( FString& InOutFilename ) const override;
-#endif
+	//~ Begin ISourceControlRevision Interface
+	virtual bool Get(FString& InOutFilename GIT_UE_500_ONLY(, EConcurrency::Type InConcurrency = EConcurrency::Synchronous)) const override;
 
-	virtual bool GetAnnotated( TArray<FAnnotationLine>& OutLines ) const override;
-	virtual bool GetAnnotated( FString& InOutFilename ) const override;
-	virtual const FString& GetFilename() const override;
-	virtual int32 GetRevisionNumber() const override;
-	virtual const FString& GetRevision() const override;
-	virtual const FString& GetDescription() const override;
-	virtual const FString& GetUserName() const override;
-	virtual const FString& GetClientSpec() const override;
-	virtual const FString& GetAction() const override;
-	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> GetBranchSource() const override;
-	virtual const FDateTime& GetDate() const override;
-	virtual int32 GetCheckInIdentifier() const override;
-	virtual int32 GetFileSize() const override;
+	virtual bool GetAnnotated(TArray<FAnnotationLine>& OutLines) const override
+	{
+		return false;
+	}
+	virtual bool GetAnnotated(FString& InOutFilename) const override
+	{
+		return false;
+	}
+	virtual const FString& GetFilename() const override
+	{
+		return Filename;
+	}
+	virtual int32 GetRevisionNumber() const override
+	{
+		return RevisionNumber;
+	}
+	virtual const FString& GetRevision() const override
+	{
+		return ShortCommitId;
+	}
+	virtual const FString& GetDescription() const override
+	{
+		return Description;
+	}
+	virtual const FString& GetUserName() const override
+	{
+		return UserName;
+	}
+	virtual const FString& GetClientSpec() const override
+	{
+		static FString EmptyString(TEXT(""));
+		return EmptyString;
+	}
+	virtual const FString& GetAction() const override
+	{
+		return Action;
+	}
+	virtual TSharedPtr<ISourceControlRevision> GetBranchSource() const override
+	{
+		// if this revision was copied/moved from some other revision
+		return BranchSource;
+	}
+	virtual const FDateTime& GetDate() const override
+	{
+		return Date;
+	}
+	virtual int32 GetCheckInIdentifier() const override
+	{
+		return CommitIdNumber;
+	}
+	virtual int32 GetFileSize() const override
+	{
+		return FileSize;
+	}
+	//~ End ISourceControlRevision Interface
+
+private:
+	/**
+	 * Run a Git "cat-file" command to dump the binary content of a revision into a file.
+	 *
+	 * @param	InPathToGitBinary	The path to the Git binary
+	 * @param	InRepositoryRoot	The Git repository from where to run the command - usually the Game directory
+	 * @param	InParameter			The parameters to the Git show command (rev:path)
+	 * @param	InDumpFileName		The temporary file to dump the revision
+	 * @returns true if the command succeeded and returned no errors
+	*/
+	static bool RunDumpToFile(
+		const FString& InPathToGitBinary,
+		const FString& InRepositoryRoot,
+		const FString& InParameter,
+		const FString& InDumpFileName);
 
 public:
-
 	/** The filename this revision refers to */
 	FString Filename;
 
@@ -64,7 +116,7 @@ public:
 	FString Action;
 
 	/** Source of move ("branch" in Perforce term) if any */
-	TSharedPtr<FGitLFSSourceControlRevision, ESPMode::ThreadSafe> BranchSource;
+	TSharedPtr<FGitLFSSourceControlRevision> BranchSource;
 
 	/** The date this revision was made */
 	FDateTime Date;
@@ -75,6 +127,3 @@ public:
 	/** Dynamic repository root **/
 	FString PathToRepoRoot;
 };
-
-/** History composed of the last 100 revisions of the file */
-typedef TArray< TSharedRef<FGitLFSSourceControlRevision, ESPMode::ThreadSafe> >	TGitSourceControlHistory;

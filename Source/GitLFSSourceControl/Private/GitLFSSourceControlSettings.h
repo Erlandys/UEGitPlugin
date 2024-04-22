@@ -12,7 +12,7 @@ class FGitLFSSourceControlSettings
 {
 public:
 	/** Get the Git Binary Path */
-	const FString GetBinaryPath() const;
+	FString GetBinaryPath() const;
 
 	/** Set the Git Binary Path */
 	bool SetBinaryPath(const FString& InString);
@@ -24,7 +24,7 @@ public:
 	bool SetUsingGitLfsLocking(const bool InUsingGitLfsLocking);
 
 	/** Get the username used by the Git LFS 2 File Locks server */
-	const FString GetLfsUserName() const;
+	FString GetLfsUserName() const;
 
 	/** Set the username used by the Git LFS 2 File Locks server */
 	bool SetLfsUserName(const FString& InString);

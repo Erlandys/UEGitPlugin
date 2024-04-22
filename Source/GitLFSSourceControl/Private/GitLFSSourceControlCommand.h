@@ -9,7 +9,9 @@
 #include "ISourceControlProvider.h"
 #include "Misc/IQueuedWork.h"
 
-/** Accumulated error and info messages for a revision control operation.  */
+class IGitLFSSourceControlWorker;
+
+// Accumulated error and info messages for a revision control operation.
 struct FGitLFSSourceControlResultInfo
 {
 	/** Append any messages from another FSourceControlResultInfo, ensuring to keep any already accumulated info. */
@@ -26,19 +28,23 @@ struct FGitLFSSourceControlResultInfo
 	TArray<FString> ErrorMessages;
 };
 
-
-/**
- * Used to execute Git commands multi-threaded.
- */
+// Used to execute Git commands multi-threaded.
 class FGitLFSSourceControlCommand : public IQueuedWork
 {
 public:
+	FGitLFSSourceControlCommand(
+		const TSharedRef<ISourceControlOperation>& Operation,
+		const TSharedRef<IGitLFSSourceControlWorker>& InWorker,
+		const FSourceControlOperationComplete& InOperationCompleteDelegate = FSourceControlOperationComplete());
 
-	FGitLFSSourceControlCommand(const TSharedRef<class ISourceControlOperation, ESPMode::ThreadSafe>& InOperation, const TSharedRef<class IGitLFSSourceControlWorker, ESPMode::ThreadSafe>& InWorker, const FSourceControlOperationComplete& InOperationCompleteDelegate = FSourceControlOperationComplete());
+	//~ Begin IQueuedWork Interface
+	virtual void Abandon() override;
+	virtual void DoThreadedWork() override;
+	//~ End IQueuedWork Interface
 
 	/**
-	 *  Modify the repo root if all selected files are in a plugin subfolder, and the plugin subfolder is a git repo
-	 *  This supports the case where each plugin is a sub module
+	 * Modify the repo root if all selected files are in a plugin subfolder, and the plugin subfolder is a git repo
+	 * This supports the case where each plugin is a sub module
 	 */
 	void UpdateRepositoryRootIfSubmodule(const TArray<FString>& AbsoluteFilePaths);
 
@@ -48,29 +54,15 @@ public:
 	 */
 	bool DoWork();
 
-	/**
-	 * Tells the queued work that it is being abandoned so that it can do
-	 * per object clean up as needed. This will only be called if it is being
-	 * abandoned before completion. NOTE: This requires the object to delete
-	 * itself using whatever heap it was allocated in.
-	 */
-	virtual void Abandon() override;
-
-	/**
-	 * This method is also used to tell the object to cleanup but not before
-	 * the object has finished it's work.
-	 */
-	virtual void DoThreadedWork() override;
-
-	/** Attempt to cancel the operation */
 	void Cancel();
-
-	/** Is the operation canceled? */
 	bool IsCanceled() const;
-
-	/** Save any results and call any registered callbacks. */
 	ECommandResult::Type ReturnResults();
 
+	template<typename T>
+	T& GetOperation()
+	{
+		return *StaticCastSharedRef<T>(Operation);
+	}
 public:
 	/** Path to the Git binary */
 	FString PathToGitBinary;
@@ -85,18 +77,18 @@ public:
 	bool bUsingGitLfsLocking;
 
 	/** Operation we want to perform - contains outward-facing parameters & results */
-	TSharedRef<class ISourceControlOperation, ESPMode::ThreadSafe> Operation;
+	TSharedRef<ISourceControlOperation> Operation;
 
 	/** The object that will actually do the work */
-	TSharedRef<class IGitLFSSourceControlWorker, ESPMode::ThreadSafe> Worker;
+	TSharedRef<IGitLFSSourceControlWorker> Worker;
 
 	/** Delegate to notify when this operation completes */
 	FSourceControlOperationComplete OperationCompleteDelegate;
 
-	/**If true, this command has been processed by the revision control thread*/
+	/** If true, this command has been processed by the revision control thread*/
 	volatile int32 bExecuteProcessed;
 
-	/**If true, this command has been cancelled*/
+	/** If true, this command has been cancelled*/
 	volatile int32 bCancelled;
 
 	/**If true, the revision control command succeeded*/
@@ -108,14 +100,14 @@ public:
 	/** Current Commit description's Summary */
 	FString CommitSummary;
 
-	/** If true, this command will be automatically cleaned up in Tick() */
-	bool bAutoDelete;
-
 	/** Whether we are running multi-treaded or not*/
 	EConcurrency::Type Concurrency;
 
 	/** Files to perform this operation on */
 	TArray<FString> Files;
+
+	/** Ignored files by .gitignore */
+	TArray<FString> Ignoredfiles;
 
 	/** Changelist to perform this operation on */
 	FGitLFSSourceControlChangelist Changelist;
@@ -124,5 +116,5 @@ public:
 	FGitLFSSourceControlResultInfo ResultInfo;
 
 	/** Branch names for status queries */
-	TArray< FString > StatusBranchNames;
+	TArray<FString> StatusBranchNames;
 };

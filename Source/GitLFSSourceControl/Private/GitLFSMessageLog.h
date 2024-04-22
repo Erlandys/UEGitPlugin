@@ -3,10 +3,10 @@
 #pragma once
 
 #include "ISourceControlModule.h"
-#include "Internationalization/Text.h"
 #include "Logging/MessageLog.h"
-#include "Logging/TokenizedMessage.h"
 #include "Templates/SharedPointer.h"
+#include "Logging/TokenizedMessage.h"
+#include "Internationalization/Text.h"
 
 /** 
  * A thread safe replacement for FMessageLog which can be called from background threads. 
@@ -108,6 +108,5 @@ public:
 	}
 
 private:
-
 	FMessageLog Log;
 };

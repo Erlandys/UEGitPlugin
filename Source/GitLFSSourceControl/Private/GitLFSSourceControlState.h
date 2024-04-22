@@ -5,122 +5,126 @@
 
 #pragma once
 
+#include "ISourceControlState.h"
+#include "GitLFSSourceControlHelpers.h"
 #include "GitLFSSourceControlChangelist.h"
-#include "GitLFSSourceControlRevision.h"
-#include "Runtime/Launch/Resources/Version.h"
+
+class FGitLFSSourceControlRevision;
 
 /** A consolidation of state priorities. */
-namespace EGitLFSState
+enum class EGitLFSState
 {
-	enum Type
-	{
-		Unset,
-		NotAtHead,
+	Unset,
+	NotAtHead,
 #if 0
-		AddedAtHead,
-		DeletedAtHead,
+	AddedAtHead,
+	DeletedAtHead,
 #endif
-		LockedOther,
-		NotLatest,
-		/** Unmerged state (modified, but conflicts) */
-		Unmerged,
-		Added,
-		Deleted,
-		Modified,
-		/** Not modified, but locked explicitly. */
-		CheckedOut,
-		Untracked,
-		Lockable,
-		Unmodified,
-		Ignored,
-		/** Whatever else. */
-		None,
-	};
-}
+	LockedOther,
+	NotLatest,
+
+	/** Unmerged state (modified, but conflicts) */
+	Unmerged,
+	Added,
+	Deleted,
+	Modified,
+
+	/** Not modified, but locked explicitly. */
+	CheckedOut,
+	Untracked,
+	Lockable,
+	Unmodified,
+	Ignored,
+
+	/** Whatever else. */
+	None,
+};
 
 /** Corresponds to diff file states. */
-namespace EGitLFSFileState
+enum class EGitLFSFileState
 {
-	enum Type
-	{
-		Unset,
-		Unknown,
-		Added,
-		Copied,
-		Deleted,
-		Modified,
-		Renamed,
-		Missing,
-		Unmerged,
-	};
-}
+	Unset,
+	Unknown,
+	Added,
+	Copied,
+	Deleted,
+	Modified,
+	Renamed,
+	Missing,
+	Unmerged,
+};
 
 /** Where in the world is this file? */
-namespace EGitLFSTreeState
+enum class EGitLFSTreeState
 {
-	enum Type
-	{
-		Unset,
-		/** This file is synced to commit */
-		Unmodified,
-		/** This file is modified, but not in staging tree */
-		Working,
-		/** This file is in staging tree (git add) */
-		Staged,
-		/** This file is not tracked in the repo yet */
-		Untracked,
-		/** This file is ignored by the repo */
-		Ignored,
-		/** This file is outside the repo folder */
-		NotInRepo,
-	};
-}
+	Unset,
+
+	/** This file is synced to commit */
+	Unmodified,
+
+	/** This file is modified, but not in staging tree */
+	Working,
+
+	/** This file is in staging tree (git add) */
+	Staged,
+
+	/** This file is not tracked in the repo yet */
+	Untracked,
+
+	/** This file is ignored by the repo */
+	Ignored,
+
+	/** This file is outside the repo folder */
+	NotInRepo,
+};
 
 /** LFS locks status of this file */
-namespace EGitLFSLockState
+enum class EGitLFSLockState
 {
-	enum Type
-	{
-		Unset,
-		Unknown,
-		Unlockable,
-		NotLocked,
-		Locked,
-		LockedOther,
-	};
-}
+	Unset,
+	Unknown,
+	Unlockable,
+	NotLocked,
+	Locked,
+	LockedOther,
+};
 
 /** What is this file doing at HEAD? */
-namespace EGitLFSRemoteState
+enum class EGitLFSRemoteState
 {
-	enum Type
-	{
-		Unset,
-		/** Up to date */
-		UpToDate,
-		/** Local version is behind remote */
-		NotAtHead,
+	Unset,
+
+	/** Up to date */
+	UpToDate,
+
+	/** Local version is behind remote */
+	NotAtHead,
+
 #if 0
-		// TODO: handle these
-		/** Remote file does not exist on local */
-		AddedAtHead,
-		/** Local was deleted on remote */
-		DeletedAtHead,
+	// TODO: handle these
+	/** Remote file does not exist on local */
+	AddedAtHead,
+
+	/** Local was deleted on remote */
+	DeletedAtHead,
 #endif
-		/** Not at the latest revision amongst the tracked branches */
-		NotLatest,
-	};
-}
+
+	/** Not at the latest revision amongst the tracked branches */
+	NotLatest,
+};
 
 /** Combined state, for updating cache in a map. */
 struct FGitLFSState
 {
-	EGitLFSFileState::Type FileState = EGitLFSFileState::Unknown;
-	EGitLFSTreeState::Type TreeState = EGitLFSTreeState::NotInRepo;
-	EGitLFSLockState::Type LockState = EGitLFSLockState::Unknown;
+	EGitLFSFileState FileState = EGitLFSFileState::Unknown;
+	EGitLFSTreeState TreeState = EGitLFSTreeState::NotInRepo;
+	EGitLFSLockState LockState = EGitLFSLockState::Unknown;
+
 	/** Name of user who has locked the file */
 	FString LockUser;
-	EGitLFSRemoteState::Type RemoteState = EGitLFSRemoteState::UpToDate;
+
+	EGitLFSRemoteState RemoteState = EGitLFSRemoteState::UpToDate;
+
 	/** The branch with the latest commit for this file */
 	FString HeadBranch;
 };
@@ -130,44 +134,74 @@ class FGitLFSSourceControlState : public ISourceControlState
 public:
 	FGitLFSSourceControlState(const FString &InLocalFilename)
 		: LocalFilename(InLocalFilename)
-		, TimeStamp(0)
-		, HeadAction(TEXT("Changed"))
-		, HeadCommit(TEXT("Unknown"))
 	{
 	}
 
-	/** ISourceControlState interface */
-	virtual int32 GetHistorySize() const override;
-	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> GetHistoryItem(int32 HistoryIndex) const override;
-	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> FindHistoryRevision(int32 RevisionNumber) const override;
-	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> FindHistoryRevision(const FString& InRevision) const override;
-#if ENGINE_MAJOR_VERSION < 5 || ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION < 3
-	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> GetBaseRevForMerge() const override;
-#else
+	//~ Begin ISourceControlState Interface
+	virtual int32 GetHistorySize() const override
+	{
+		return History.Num();
+	}
+	virtual TSharedPtr<ISourceControlRevision> GetHistoryItem(const int32 HistoryIndex) const override;
+	virtual TSharedPtr<ISourceControlRevision> FindHistoryRevision(int32 RevisionNumber) const override;
+	virtual TSharedPtr<ISourceControlRevision> FindHistoryRevision(const FString& InRevision) const override;
+
+#if GIT_ENGINE_VERSION >= 503
 	virtual FResolveInfo GetResolveInfo() const override;
+#else
+	virtual TSharedPtr<ISourceControlRevision> GetBaseRevForMerge() const override;
 #endif
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 2
-	virtual TSharedPtr<class ISourceControlRevision, ESPMode::ThreadSafe> GetCurrentRevision() const override;
+
+#if GIT_ENGINE_VERSION >= 502
+	virtual TSharedPtr<ISourceControlRevision> GetCurrentRevision() const override
+	{
+		return nullptr;
+	}
 #endif
-#if ENGINE_MAJOR_VERSION >= 5
+
+#if GIT_ENGINE_VERSION >= 500
 	virtual FSlateIcon GetIcon() const override;
 #else
 	virtual FName GetIconName() const override;
 	virtual FName GetSmallIconName() const override;
 #endif
+
 	virtual FText GetDisplayName() const override;
 	virtual FText GetDisplayTooltip() const override;
-	virtual const FString& GetFilename() const override;
-	virtual const FDateTime& GetTimeStamp() const override;
+	virtual const FString& GetFilename() const override
+	{
+		return LocalFilename;
+	}
+	virtual const FDateTime& GetTimeStamp() const override
+	{
+		return TimeStamp;
+	}
+	// Deleted and Missing assets cannot appear in the Content Browser, but they do in the Submit files to Revision Control window!
 	virtual bool CanCheckIn() const override;
 	virtual bool CanCheckout() const override;
 	virtual bool IsCheckedOut() const override;
 	virtual bool IsCheckedOutOther(FString* Who = NULL) const override;
-	virtual bool IsCheckedOutInOtherBranch(const FString& CurrentBranch = FString()) const override;
-	virtual bool IsModifiedInOtherBranch(const FString& CurrentBranch = FString()) const override;
-	virtual bool IsCheckedOutOrModifiedInOtherBranch(const FString& CurrentBranch = FString()) const override { return IsModifiedInOtherBranch(CurrentBranch); }
-	virtual TArray<FString> GetCheckedOutBranches() const override { return TArray<FString>(); }
-	virtual FString GetOtherUserBranchCheckedOuts() const override { return FString(); }
+	virtual bool IsCheckedOutInOtherBranch(const FString& CurrentBranch = FString()) const override
+	{
+		// You can't check out separately per branch
+		return false;
+	}
+	virtual bool IsModifiedInOtherBranch(const FString& CurrentBranch = FString()) const override
+	{
+		return State.RemoteState == EGitLFSRemoteState::NotLatest;
+	}
+	virtual bool IsCheckedOutOrModifiedInOtherBranch(const FString& CurrentBranch = FString()) const override
+	{
+		return IsModifiedInOtherBranch(CurrentBranch);
+	}
+	virtual TArray<FString> GetCheckedOutBranches() const override
+	{
+		return {};
+	}
+	virtual FString GetOtherUserBranchCheckedOuts() const override
+	{
+		return {};
+	}
 	virtual bool GetOtherBranchHeadModification(FString& HeadBranchOut, FString& ActionOut, int32& HeadChangeListOut) const override;
 	virtual bool IsCurrent() const override;
 	virtual bool IsSourceControlled() const override;
@@ -181,13 +215,14 @@ public:
 	virtual bool CanDelete() const override;
 	virtual bool IsConflicted() const override;
 	virtual bool CanRevert() const override;
+	//~ End ISourceControlState Interface
 
 private:
-	EGitLFSState::Type GetGitState() const;
+	EGitLFSState GetGitState() const;
 
 public:
 	/** History of the item, if any */
-	TGitSourceControlHistory History;
+	TArray<TSharedRef<FGitLFSSourceControlRevision>> History;
 
 	/** Filename on disk */
 	FString LocalFilename;
@@ -207,14 +242,14 @@ public:
 	FGitLFSSourceControlChangelist Changelist;
 
 	/** The timestamp of the last update */
-	FDateTime TimeStamp;
+	FDateTime TimeStamp = 0;
 
 	/** The action within the head branch TODO */
-	FString HeadAction;
+	FString HeadAction = TEXT("Changed");
 
 	/** The last file modification time in the head branch TODO */
-	int64 HeadModTime;
+	int64 HeadModTime = 0;
 
 	/** The change list the last modification TODO */
-	FString HeadCommit;
+	FString HeadCommit = TEXT("Unknown");
 };

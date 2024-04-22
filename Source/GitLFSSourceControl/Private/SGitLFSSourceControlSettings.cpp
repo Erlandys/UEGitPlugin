@@ -5,47 +5,38 @@
 
 #include "SGitLFSSourceControlSettings.h"
 
-#include "Runtime/Launch/Resources/Version.h"
-#include "Fonts/SlateFontInfo.h"
-#include "Misc/App.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
-#include "Modules/ModuleManager.h"
-#include "Widgets/SBoxPanel.h"
-#include "Widgets/Text/STextBlock.h"
-#include "Widgets/Input/SButton.h"
-#include "Widgets/Input/SEditableTextBox.h"
+#include "GitLFSSourceControlModule.h"
+
+#include "EditorDirectories.h"
+#include "SourceControlOperations.h"
 #include "Widgets/Input/SFilePathPicker.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
-#include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Framework/Notifications/NotificationManager.h"
-#include "EditorDirectories.h"
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1
-#else
+
+#if GIT_ENGINE_VERSION < 501
 #include "EditorStyleSet.h"
 #endif
-#include "SourceControlOperations.h"
-#include "GitLFSSourceControlModule.h"
-#include "GitLFSSourceControlUtils.h"
-
 
 #define LOCTEXT_NAMESPACE "SGitLFSSourceControlSettings"
 
 void SGitLFSSourceControlSettings::Construct(const FArguments& InArgs)
 {
-	bAutoCreateGitIgnore = true;
-	bAutoCreateReadme = true;
-	bAutoCreateGitAttributes = false;
-	bAutoInitialCommit = true;
-
 	InitialCommitMessage = LOCTEXT("InitialCommitMessage", "Initial commit");
 	ReadmeContent = FText::FromString(FString(TEXT("# ")) + FApp::GetProjectName() + "\n\nDeveloped with Unreal Engine\n");
 
-	ConstructBasedOnEngineVersion( );
+	ConstructBasedOnEngineVersion();
 }
 
-#if ENGINE_MAJOR_VERSION < 5
+SGitLFSSourceControlSettings::~SGitLFSSourceControlSettings()
+{
+	RemoveInProgressNotification();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 void SGitLFSSourceControlSettings::ConstructBasedOnEngineVersion( )
 {
 	const FText FileFilterType = NSLOCTEXT("GitSourceControl", "Executables", "Executables");
@@ -55,512 +46,354 @@ void SGitLFSSourceControlSettings::ConstructBasedOnEngineVersion( )
 	const FString FileFilterText = FString::Printf(TEXT("%s"), *FileFilterType.ToString());
 #endif
 
+#if GIT_ENGINE_VERSION >= 500
+#define ROW_LEFT(PADDING_HEIGHT) \
+	+ SHorizontalBox::Slot() \
+	.VAlign(VAlign_Center) \
+	.HAlign(HAlign_Right) \
+	.FillWidth(1.f) \
+	.Padding(FMargin(0.f, 0.f, 16.f, PADDING_HEIGHT))
+
+#define ROW_RIGHT(PADDING_HEIGHT) \
+	+ SHorizontalBox::Slot() \
+	.VAlign(VAlign_Center) \
+	.FillWidth(2.f) \
+	.Padding(FMargin(0.f, 0.f, 0.f, PADDING_HEIGHT))
+#else
+#define ROW_LEFT(PADDING_HEIGHT) \
+	+ SHorizontalBox::Slot() \
+	.FillWidth(1.f)
+
+#define ROW_RIGHT(PADDING_HEIGHT) \
+	+ SHorizontalBox::Slot() \
+	.FillWidth(2.f)
+#endif
+
+#if GIT_ENGINE_VERSION >= 500
+	const FSlateFontInfo Font = FAppStyle::GetFontStyle("NormalFont");
+#else
 	const FSlateFontInfo Font = FEditorStyle::GetFontStyle(TEXT("SourceControl.LoginWindow.Font"));
-	ChildSlot
-	[
-		SNew(SBorder)
-		.BorderImage( FEditorStyle::GetBrush("DetailsView.CategoryBottom"))
-		.Padding(FMargin(0.0f, 3.0f, 0.0f, 0.0f))
-		[
-			SNew(SVerticalBox)
-			// Path to the Git command line executable
-			+SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
-				.ToolTipText(LOCTEXT("BinaryPathLabel_Tooltip", "Path to Git binary"))
-				+SHorizontalBox::Slot()
-				.FillWidth(1.0f)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("BinaryPathLabel", "Git Path"))
-					.Font(Font)
-				]
-				+SHorizontalBox::Slot()
-				.FillWidth(2.0f)
-				[
-					SNew(SFilePathPicker)
-					.BrowseButtonImage(FEditorStyle::GetBrush("PropertyWindow.Button_Ellipsis"))
-					.BrowseButtonStyle(FEditorStyle::Get(), "HoverHintOnly")
-					.BrowseDirectory(FEditorDirectories::Get().GetLastDirectory(ELastDirectory::GENERIC_OPEN))
-					.BrowseTitle(LOCTEXT("BinaryPathBrowseTitle", "File picker..."))
-					.FilePath(this, &SGitLFSSourceControlSettings::GetBinaryPathString)
-					.FileTypeFilter(FileFilterText)
-					.OnPathPicked(this, &SGitLFSSourceControlSettings::OnBinaryPathPicked)
-				]
-			]
-			// Root of the local repository
-			+SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
-				.ToolTipText(LOCTEXT("RepositoryRootLabel_Tooltip", "Path to the root of the Git repository"))
-				+SHorizontalBox::Slot()
-				.FillWidth(1.0f)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("RepositoryRootLabel", "Root of the repository"))
-					.Font(Font)
-				]
-				+SHorizontalBox::Slot()
-				.FillWidth(2.0f)
-				[
-					SNew(STextBlock)
-					.Text(this, &SGitLFSSourceControlSettings::GetPathToRepositoryRoot)
-					.Font(Font)
-				]
-			]
-			// User Name
-			+SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
-				.ToolTipText(LOCTEXT("GitUserName_Tooltip", "User name configured for the Git repository"))
-				+SHorizontalBox::Slot()
-				.FillWidth(1.0f)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("GitUserName", "User Name"))
-					.Font(Font)
-				]
-				+SHorizontalBox::Slot()
-				.FillWidth(2.0f)
-				[
-					SNew(STextBlock)
-					.Text(this, &SGitLFSSourceControlSettings::GetUserName)
-					.Font(Font)
-				]
-			]
-			// User e-mail
-			+SVerticalBox::Slot()
-			.FillHeight(1.0f)
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
-				.ToolTipText(LOCTEXT("GitUserEmail_Tooltip", "User e-mail configured for the Git repository"))
-				+SHorizontalBox::Slot()
-				.FillWidth(1.0f)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("GitUserEmail", "E-Mail"))
-					.Font(Font)
-				]
-				+SHorizontalBox::Slot()
-				.FillWidth(2.0f)
-				[
-					SNew(STextBlock)
-					.Text(this, &SGitLFSSourceControlSettings::GetUserEmail)
-					.Font(Font)
-				]
-			]
-			// Separator
-			+SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SSeparator)
-			]
-			// Explanation text
-			+SVerticalBox::Slot()
-			.FillHeight(1.0f)
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
-				.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
-				+SHorizontalBox::Slot()
-				.FillWidth(1.0f)
-				.HAlign(HAlign_Center)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("RepositoryNotFound", "Current Project is not contained in a Git Repository. Fill the form below to initialize a new Repository."))
-					.ToolTipText(LOCTEXT("RepositoryNotFound_Tooltip", "No Repository found at the level or above the current Project"))
-					.Font(Font)
-				]
-			]
-			// Option to configure the URL of the default remote 'origin'
-			// TODO: option to configure the name of the remote instead of the default origin
-			+SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
-				.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
-				.ToolTipText(LOCTEXT("ConfigureOrigin_Tooltip", "Configure the URL of the default remote 'origin'"))
-				+SHorizontalBox::Slot()
-				.FillWidth(1.0f)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("ConfigureOrigin", "URL of the remote server 'origin'"))
-					.Font(Font)
-				]
-				+SHorizontalBox::Slot()
-				.FillWidth(2.0f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(SEditableTextBox)
-					.Text(this, &SGitLFSSourceControlSettings::GetRemoteUrl)
-					.OnTextCommitted(this, &SGitLFSSourceControlSettings::OnRemoteUrlCommited)
-					.Font(Font)
-				]
-			]
-			// Option to add a proper .gitignore file (true by default)
-			+SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
-				.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
-				.ToolTipText(LOCTEXT("CreateGitIgnore_Tooltip", "Create and add a standard '.gitignore' file"))
-				+SHorizontalBox::Slot()
-				.FillWidth(0.1f)
-				[
-					SNew(SCheckBox)
-					.IsChecked(ECheckBoxState::Checked)
-					.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedCreateGitIgnore)
-				]
-				+SHorizontalBox::Slot()
-				.FillWidth(2.9f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("CreateGitIgnore", "Add a .gitignore file"))
-					.Font(Font)
-				]
-			]
-			// Option to add a README.md file with custom content
-			+SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
-				.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
-				.ToolTipText(LOCTEXT("CreateReadme_Tooltip", "Add a README.md file"))
-				+SHorizontalBox::Slot()
-				.FillWidth(0.1f)
-				[
-					SNew(SCheckBox)
-					.IsChecked(ECheckBoxState::Checked)
-					.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedCreateReadme)
-				]
-				+SHorizontalBox::Slot()
-				.FillWidth(0.9f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("CreateReadme", "Add a basic README.md file"))
-					.Font(Font)
-				]
-				+SHorizontalBox::Slot()
-				.FillWidth(2.0f)
-				.Padding(2.0f)
-				[
-					SNew(SMultiLineEditableTextBox)
-					.Text(this, &SGitLFSSourceControlSettings::GetReadmeContent)
-					.OnTextCommitted(this, &SGitLFSSourceControlSettings::OnReadmeContentCommited)
-					.IsEnabled(this, &SGitLFSSourceControlSettings::GetAutoCreateReadme)
-					.SelectAllTextWhenFocused(true)
-					.Font(Font)
-				]
-			]
-			// Option to add a proper .gitattributes file for Git LFS (false by default)
-			+SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(2.0f)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
-				.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
-				.ToolTipText(LOCTEXT("CreateGitAttributes_Tooltip", "Create and add a '.gitattributes' file to enable Git LFS for the whole 'Content/' directory (needs Git LFS extensions to be installed)."))
-				+SHorizontalBox::Slot()
-				.FillWidth(0.1f)
-				[
-					SNew(SCheckBox)
-					.IsChecked(ECheckBoxState::Unchecked)
-					.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedCreateGitAttributes)
-				]
-				+SHorizontalBox::Slot()
-				.FillWidth(2.9f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("CreateGitAttributes", "Add a .gitattributes file to enable Git LFS"))
-					.Font(Font)
-				]
-			]
-			// Option to use the Git LFS File Locking workflow (false by default)
-			// Enabled even after init to switch it off in case of no network
-			// TODO LFS turning it off afterwards does not work because all files are readonly !
-			+SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(2.0f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(SHorizontalBox)
-					.ToolTipText(LOCTEXT("UseGitLfsLocking_Tooltip", "Uses Git LFS 2 File Locking workflow (CheckOut and Commit/Push)."))
-				+ SHorizontalBox::Slot()
-				.FillWidth(0.1f)
-				[
-					SNew(SCheckBox)
-					.IsChecked(SGitLFSSourceControlSettings::IsUsingGitLfsLocking())
-				.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedUseGitLfsLocking)
-				.IsEnabled(this, &SGitLFSSourceControlSettings::CanUseGitLfsLocking)
-				]
-			+ SHorizontalBox::Slot()
-				.FillWidth(0.9f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("UseGitLfsLocking", "Uses Git LFS 2 File Locking workflow"))
-				.Font(Font)
-				]
-			// Username credential used to access the Git LFS 2 File Locks server
-			+ SHorizontalBox::Slot()
-				.FillWidth(2.0f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(SEditableTextBox)
-					.Text(this, &SGitLFSSourceControlSettings::GetLfsUserName)
-				.OnTextCommitted(this, &SGitLFSSourceControlSettings::OnLfsUserNameCommited)
-				.IsEnabled(this, &SGitLFSSourceControlSettings::GetIsUsingGitLfsLocking)
-				.HintText(LOCTEXT("LfsUserName_Hint", "Username to lock files on the LFS server"))
-				.Font(Font)
-				]
-				]
-			// Option to Make the initial Git commit with custom message
-			+ SVerticalBox::Slot()
-				.AutoHeight()
-				.Padding(2.0f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(SHorizontalBox)
-					.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
-				.ToolTipText(LOCTEXT("InitialGitCommit_Tooltip", "Make the initial Git commit"))
-				+ SHorizontalBox::Slot()
-				.FillWidth(0.1f)
-				[
-					SNew(SCheckBox)
-					.IsChecked(ECheckBoxState::Checked)
-				.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedInitialCommit)
-				]
-			+ SHorizontalBox::Slot()
-				.FillWidth(0.9f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("InitialGitCommit", "Make the initial Git commit"))
-				.Font(Font)
-				]
-			+ SHorizontalBox::Slot()
-				.FillWidth(2.0f)
-				.Padding(2.0f)
-				[
-					SNew(SMultiLineEditableTextBox)
-					.Text(this, &SGitLFSSourceControlSettings::GetInitialCommitMessage)
-				.OnTextCommitted(this, &SGitLFSSourceControlSettings::OnInitialCommitMessageCommited)
-				.IsEnabled(this, &SGitLFSSourceControlSettings::GetAutoInitialCommit)
-				.SelectAllTextWhenFocused(true)
-				.Font(Font)
-				]
-				]
-			// Button to initialize the project with Git, create .gitignore/.gitattributes files, and make the first commit)
-			+ SVerticalBox::Slot()
-				.FillHeight(2.5f)
-				.Padding(4.0f)
-				.VAlign(VAlign_Center)
-				[
-					SNew(SHorizontalBox)
-					.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
-				+ SHorizontalBox::Slot()
-				.FillWidth(1.0f)
-				[
-					SNew(SButton)
-					.Text(LOCTEXT("GitInitRepository", "Initialize project with Git"))
-				.ToolTipText(LOCTEXT("GitInitRepository_Tooltip", "Initialize current project as a new Git repository"))
-				.OnClicked(this, &SGitLFSSourceControlSettings::OnClickedInitializeGitRepository)
-				.IsEnabled(this, &SGitLFSSourceControlSettings::CanInitializeGitRepository)
-				.HAlign(HAlign_Center)
-				.ContentPadding(6)
-				]
-				]
-		]
-	];
-}
-#else
-void SGitLFSSourceControlSettings::ConstructBasedOnEngineVersion( )
-{
-	const FText FileFilterType = NSLOCTEXT("GitSourceControl", "Executables", "Executables");
-#if PLATFORM_WINDOWS
-	const FString FileFilterText = FString::Printf(TEXT("%s (*.exe)|*.exe"), *FileFilterType.ToString());
-#else
-	const FString FileFilterText = FString::Printf(TEXT("%s"), *FileFilterType.ToString());
 #endif
 
-	using Self = std::remove_pointer_t<decltype(this)>;
-
-	#define ROW_LEFT( PADDING_HEIGHT ) +SHorizontalBox::Slot() \
-			.VAlign(VAlign_Center) \
-			.HAlign(HAlign_Right) \
-			.FillWidth(1.0f) \
-			.Padding(FMargin(0.0f, 0.0f, 16.0f, PADDING_HEIGHT))
-
-	#define ROW_RIGHT( PADDING_HEIGHT ) +SHorizontalBox::Slot() \
-			.VAlign(VAlign_Center) \
-			.FillWidth(2.0f) \
-			.Padding(FMargin(0.0f, 0.0f, 0.0f, PADDING_HEIGHT))
-
-	#define TT_GitPath LOCTEXT("BinaryPathLabel_Tooltip", "Path to Git binary")
-	#define TT_RepoRoot LOCTEXT("RepositoryRootLabel_Tooltip", "Path to the root of the Git repository")
-	#define TT_UserName LOCTEXT("UserNameLabel_Tooltip", "Git Username fetched from local config")
-	#define TT_Email LOCTEXT("GitUserEmail_Tooltip", "Git E-mail fetched from local config")
-	#define TT_LFS LOCTEXT("UseGitLfsLocking_Tooltip", "Uses Git LFS 2 File Locking workflow (CheckOut and Commit/Push).")
-
-	ChildSlot
-	[
+	auto VerticalBox =
 		SNew(SVerticalBox)
 		// Git Path
-		+SVerticalBox::Slot()
+		+ SVerticalBox::Slot()
 		.AutoHeight()
+#if GIT_ENGINE_VERSION < 500
+		.Padding(2.f)
+		.VAlign(VAlign_Center)
+#endif
 		[
 			SNew(SHorizontalBox)
-			ROW_LEFT( 10.0f )
+			ROW_LEFT(10.f)
 			[
 				SNew(STextBlock)
 				.Text(LOCTEXT("BinaryPathLabel", "Git Path"))
-				.ToolTipText( TT_GitPath )
+				.ToolTipText(LOCTEXT("BinaryPathLabel_Tooltip", "Path to Git binary"))
+				.Font(Font)
 			]
-			ROW_RIGHT( 10.0f )
+			ROW_RIGHT(10.f)
 			[
 				SNew(SFilePathPicker)
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1
-				.BrowseButtonImage(FAppStyle::GetBrush("PropertyWindow.Button_Ellipsis"))
-				.BrowseButtonStyle(FAppStyle::Get(), "HoverHintOnly")
-#else
-				.BrowseButtonImage(FEditorStyle::GetBrush("PropertyWindow.Button_Ellipsis"))
-				.BrowseButtonStyle(FEditorStyle::Get(), "HoverHintOnly")
-#endif
+				.BrowseButtonImage(FEditorAppStyle::GetBrush("PropertyWindow.Button_Ellipsis"))
+				.BrowseButtonStyle(FEditorAppStyle::Get(), "HoverHintOnly")
 				.BrowseDirectory(FEditorDirectories::Get().GetLastDirectory(ELastDirectory::GENERIC_OPEN))
 				.BrowseTitle(LOCTEXT("BinaryPathBrowseTitle", "File picker..."))
-				.FilePath(this, &Self::GetBinaryPathString)
+				.FilePath(this, &SGitLFSSourceControlSettings::GetBinaryPathString)
 				.FileTypeFilter(FileFilterText)
-				.OnPathPicked(this, &Self::OnBinaryPathPicked)
+				.OnPathPicked(this, &SGitLFSSourceControlSettings::OnBinaryPathPicked)
 			]
 		]
 		// Repository Root
-		+SVerticalBox::Slot()
+		+ SVerticalBox::Slot()
+#if GIT_ENGINE_VERSION < 500
+		.AutoHeight()
+		.Padding(2.0f)
+		.VAlign(VAlign_Center)
+#endif
 		[
 			SNew(SHorizontalBox)
-			ROW_LEFT( 10.0f )
+			ROW_LEFT(10.f)
 			[
 				SNew(STextBlock)
 				.Text(LOCTEXT("RepositoryRootLabel", "Root of the repository"))
-				.ToolTipText( TT_RepoRoot )
+				.ToolTipText(LOCTEXT("RepositoryRootLabel_Tooltip", "Path to the root of the Git repository"))
+				.Font(Font)
 			]
-			ROW_RIGHT( 10.0f )
+			ROW_RIGHT(10.f)
 			[
 				SNew(STextBlock)
-				.Text(this, &Self::GetPathToRepositoryRoot)
-				.ToolTipText( TT_RepoRoot )
+				.Text(this, &SGitLFSSourceControlSettings::GetPathToRepositoryRoot)
+				.ToolTipText(LOCTEXT("RepositoryRootLabel_Tooltip", "Path to the root of the Git repository"))
+				.Font(Font)
 			]
 		]
 		// User Name
-		+SVerticalBox::Slot()
+		+ SVerticalBox::Slot()
+#if GIT_ENGINE_VERSION < 500
+		.AutoHeight()
+		.Padding(2.0f)
+		.VAlign(VAlign_Center)
+#endif
 		[
 			SNew(SHorizontalBox)
-			ROW_LEFT( 10.0f )
+			ROW_LEFT(10.0f)
 			[
 				SNew(STextBlock)
 				.Text(LOCTEXT("UserNameLabel", "User Name"))
-				.ToolTipText( TT_UserName )
+				.ToolTipText(LOCTEXT("UserNameLabel_Tooltip", "Git Username fetched from local config"))
+				.Font(Font)
 			]
-			ROW_RIGHT( 10.0f )
+			ROW_RIGHT(10.0f)
 			[
 				SNew(STextBlock)
-				.Text(this, &Self::GetUserName)
-				.ToolTipText( TT_UserName )
+				.Text(this, &SGitLFSSourceControlSettings::GetUserName)
+				.ToolTipText(LOCTEXT("UserNameLabel_Tooltip", "Git Username fetched from local config"))
+				.Font(Font)
 			]
 		]
 		// Email
-		+SVerticalBox::Slot()
+		+ SVerticalBox::Slot()
+#if GIT_ENGINE_VERSION < 500
+		.FillHeight(1.f)
+		.Padding(2.f)
+		.VAlign(VAlign_Center)
+#endif
 		[
 			SNew(SHorizontalBox)
-			ROW_LEFT( 10.0f )
+			ROW_LEFT(10.f)
 			[
 				SNew(STextBlock)
 				.Text(LOCTEXT("EmailLabel", "E-mail"))
-				.ToolTipText( TT_Email )
+				.ToolTipText(LOCTEXT("GitUserEmail_Tooltip", "Git E-mail fetched from local config"))
+				.Font(Font)
 			]
-			ROW_RIGHT( 10.0f )
+			ROW_RIGHT(10.f)
 			[
 				SNew(STextBlock)
-				.Text(this, &Self::GetUserEmail )
-				.ToolTipText( TT_Email )
+				.Text(this, &SGitLFSSourceControlSettings::GetUserEmail)
+				.ToolTipText(LOCTEXT("GitUserEmail_Tooltip", "Git E-mail fetched from local config"))
 			]
 		]
-		// LFS Config
-		+SVerticalBox::Slot()
+#if GIT_ENGINE_VERSION < 500
+		// Separator
+		+ SVerticalBox::Slot()
 		.AutoHeight()
+		.Padding(2.f)
+		.VAlign(VAlign_Center)
 		[
-			SNew(SHorizontalBox)
-			ROW_LEFT( 10.0f )
-			[
-				SNew(SCheckBox)
-				.IsChecked(Self::IsUsingGitLfsLocking())
-				.OnCheckStateChanged(this, &Self::OnCheckedUseGitLfsLocking)
-				.IsEnabled(this, &Self::CanUseGitLfsLocking)
-				.Content()
-				[
-					SNew(STextBlock)
-					.Text(LOCTEXT("UseGitLfsLocking", "Uses Git LFS"))
-					.ToolTipText( TT_LFS )
-				]
-			]
-			ROW_RIGHT( 10.0f )
-			[
-				SNew(SEditableTextBox)
-				.Text(this, &Self::GetLfsUserName)
-				.OnTextCommitted(this, &Self::OnLfsUserNameCommited)
-				.IsEnabled(this, &Self::GetIsUsingGitLfsLocking)
-				.HintText(LOCTEXT("LfsUserName_Hint", "Username to lock files on the LFS server"))
-			]
+			SNew(SSeparator)
 		]
-		// [Optional] Initial Git Commit
-		+SVerticalBox::Slot()
-		.AutoHeight()
+		// Explanation text
+		+ SVerticalBox::Slot()
+		.FillHeight(1.0f)
 		.Padding(2.0f)
 		.VAlign(VAlign_Center)
 		[
 			SNew(SHorizontalBox)
-			.ToolTipText(LOCTEXT("InitialGitCommit_Tooltip", "Make the initial Git commit"))
 			.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.f)
+			.HAlign(HAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("RepositoryNotFound", "Current Project is not contained in a Git Repository. Fill the form below to initialize a new Repository."))
+				.ToolTipText(LOCTEXT("RepositoryNotFound_Tooltip", "No Repository found at the level or above the current Project"))
+				.Font(Font)
+			]
+		]
+		// Option to configure the URL of the default remote 'origin'
+		// TODO: option to configure the name of the remote instead of the default origin
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(2.f)
+		.VAlign(VAlign_Center)
+		[
+			SNew(SHorizontalBox)
+			.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
+			.ToolTipText(LOCTEXT("ConfigureOrigin_Tooltip", "Configure the URL of the default remote 'origin'"))
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("ConfigureOrigin", "URL of the remote server 'origin'"))
+				.Font(Font)
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(2.f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SEditableTextBox)
+				.Text(this, &SGitLFSSourceControlSettings::GetRemoteUrl)
+				.OnTextCommitted(this, &SGitLFSSourceControlSettings::OnRemoteUrlCommited)
+				.Font(Font)
+			]
+		]
+		// Option to add a proper .gitignore file (true by default)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(2.f)
+		.VAlign(VAlign_Center)
+		[
+			SNew(SHorizontalBox)
+			.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
+			.ToolTipText(LOCTEXT("CreateGitIgnore_Tooltip", "Create and add a standard '.gitignore' file"))
+			+ SHorizontalBox::Slot()
+			.FillWidth(.1f)
+			[
+				SNew(SCheckBox)
+				.IsChecked(ECheckBoxState::Checked)
+				.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedCreateGitIgnore)
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(2.9f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("CreateGitIgnore", "Add a .gitignore file"))
+				.Font(Font)
+			]
+		]
+		// Option to add a README.md file with custom content
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(2.f)
+		.VAlign(VAlign_Center)
+		[
+			SNew(SHorizontalBox)
+			.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
+			.ToolTipText(LOCTEXT("CreateReadme_Tooltip", "Add a README.md file"))
+			+ SHorizontalBox::Slot()
+			.FillWidth(.1f)
+			[
+				SNew(SCheckBox)
+				.IsChecked(ECheckBoxState::Checked)
+				.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedCreateReadme)
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(.9f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("CreateReadme", "Add a basic README.md file"))
+				.Font(Font)
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(2.f)
+			.Padding(2.f)
+			[
+				SNew(SMultiLineEditableTextBox)
+				.Text(this, &SGitLFSSourceControlSettings::GetReadmeContent)
+				.OnTextCommitted(this, &SGitLFSSourceControlSettings::OnReadmeContentCommited)
+				.IsEnabled(this, &SGitLFSSourceControlSettings::GetAutoCreateReadme)
+				.SelectAllTextWhenFocused(true)
+				.Font(Font)
+			]
+		]
+		// Option to add a proper .gitattributes file for Git LFS (false by default)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(2.f)
+		.VAlign(VAlign_Center)
+		[
+			SNew(SHorizontalBox)
+			.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
+			.ToolTipText(LOCTEXT("CreateGitAttributes_Tooltip", "Create and add a '.gitattributes' file to enable Git LFS for the whole 'Content/' directory (needs Git LFS extensions to be installed)."))
+			+ SHorizontalBox::Slot()
+			.FillWidth(.1f)
+			[
+				SNew(SCheckBox)
+				.IsChecked(ECheckBoxState::Unchecked)
+				.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedCreateGitAttributes)
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(2.9f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("CreateGitAttributes", "Add a .gitattributes file to enable Git LFS"))
+				.Font(Font)
+			]
+		]
+#endif
+		// LFS Config
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+#if GIT_ENGINE_VERSION < 500
+		.Padding(2.0f)
+		.VAlign(VAlign_Center)
+#endif
+		[
+			SNew(SHorizontalBox)
+#if GIT_ENGINE_VERSION >= 500
+			ROW_LEFT(10.f)
+			[
+				SNew(SCheckBox)
+				.IsChecked(IsUsingGitLfsLocking())
+				.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedUseGitLfsLocking)
+				.IsEnabled(this, &SGitLFSSourceControlSettings::CanUseGitLfsLocking)
+				.Content()
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("UseGitLfsLocking", "Uses Git LFS"))
+					.ToolTipText(LOCTEXT("UseGitLfsLocking_Tooltip", "Uses Git LFS 2 File Locking workflow (CheckOut and Commit/Push)."))
+				]
+			]
+#else
+			.ToolTipText(LOCTEXT("UseGitLfsLocking_Tooltip", "Uses Git LFS 2 File Locking workflow (CheckOut and Commit/Push)."))
 			+ SHorizontalBox::Slot()
 			.FillWidth(0.1f)
 			[
 				SNew(SCheckBox)
-				.IsChecked(ECheckBoxState::Checked)
-				.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedInitialCommit)
+				.IsChecked(IsUsingGitLfsLocking())
+				.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedUseGitLfsLocking)
+				.IsEnabled(this, &SGitLFSSourceControlSettings::CanUseGitLfsLocking)
 			]
 			+ SHorizontalBox::Slot()
 			.FillWidth(0.9f)
 			.VAlign(VAlign_Center)
 			[
 				SNew(STextBlock)
+				.Text(LOCTEXT("UseGitLfsLocking", "Uses Git LFS 2 File Locking workflow"))
+				.Font(Font)
+			]
+#endif
+			ROW_RIGHT(10.f)
+			[
+				SNew(SEditableTextBox)
+				.Text(this, &SGitLFSSourceControlSettings::GetLfsUserName)
+				.OnTextCommitted(this, &SGitLFSSourceControlSettings::OnLfsUserNameCommited)
+				.IsEnabled(this, &SGitLFSSourceControlSettings::GetIsUsingGitLfsLocking)
+				.HintText(LOCTEXT("LfsUserName_Hint", "Username to lock files on the LFS server"))
+			]
+		]
+		// [Optional] Initial Git Commit
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(2.f)
+		.VAlign(VAlign_Center)
+		[
+			SNew(SHorizontalBox)
+			.ToolTipText(LOCTEXT("InitialGitCommit_Tooltip", "Make the initial Git commit"))
+			.Visibility(this, &SGitLFSSourceControlSettings::MustInitializeGitRepository)
+			+ SHorizontalBox::Slot()
+			.FillWidth(.1f)
+			[
+				SNew(SCheckBox)
+				.IsChecked(ECheckBoxState::Checked)
+				.OnCheckStateChanged(this, &SGitLFSSourceControlSettings::OnCheckedInitialCommit)
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(.9f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
 				.Text(LOCTEXT("InitialGitCommit", "Make the initial Git commit"))
 			]
 			+ SHorizontalBox::Slot()
-			.FillWidth(2.0f)
-			.Padding(2.0f)
+			.FillWidth(2.f)
+			.Padding(2.f)
 			[
 				SNew(SMultiLineEditableTextBox)
 				.Text(this, &SGitLFSSourceControlSettings::GetInitialCommitMessage)
@@ -570,9 +403,9 @@ void SGitLFSSourceControlSettings::ConstructBasedOnEngineVersion( )
 			]
 		]
 		// [Optional] Initialize Project with Git
-		+SVerticalBox::Slot()
+		+ SVerticalBox::Slot()
 		.FillHeight(2.5f)
-		.Padding(4.0f)
+		.Padding(4.f)
 		.VAlign(VAlign_Center)
 		[
 			SNew(SHorizontalBox)
@@ -586,70 +419,114 @@ void SGitLFSSourceControlSettings::ConstructBasedOnEngineVersion( )
 				.OnClicked(this, &SGitLFSSourceControlSettings::OnClickedInitializeGitRepository)
 				.IsEnabled(this, &SGitLFSSourceControlSettings::CanInitializeGitRepository)
 				.HAlign(HAlign_Center)
-				.ContentPadding(6)
+				.ContentPadding(6.f)
 			]
+		];
+
+#if GIT_ENGINE_VERSION >= 500
+	ChildSlot
+	[
+		VerticalBox
+	];
+#else
+	ChildSlot
+	[
+		SNew(SBorder)
+		.BorderImage(FEditorStyle::GetBrush("DetailsView.CategoryBottom"))
+		.Padding(FMargin(0.f, 3.f, 0.f, 0.f))
+		[
+			VerticalBox
 		]
 	];
+#endif
 
 	// TODO [RW] The UE5 GUI for the two optional initial git support functionalities has not been tested
 }
-#endif
 
-SGitLFSSourceControlSettings::~SGitLFSSourceControlSettings()
-{
-	RemoveInProgressNotification();
-}
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 FString SGitLFSSourceControlSettings::GetBinaryPathString() const
 {
-	const FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	return GitSourceControl.AccessSettings().GetBinaryPath();
+	return FGitLFSSourceControlModule::Get().GetSettings().GetBinaryPath();
 }
 
 void SGitLFSSourceControlSettings::OnBinaryPathPicked( const FString& PickedPath ) const
 {
-	FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	FString PickedFullPath = FPaths::ConvertRelativePathToFull(PickedPath);
-	const bool bChanged = GitSourceControl.AccessSettings().SetBinaryPath(PickedFullPath);
-	if(bChanged)
+	FGitLFSSourceControlModule& Module = FGitLFSSourceControlModule::Get();
+	if (!Module.GetSettings().SetBinaryPath(FPaths::ConvertRelativePathToFull(PickedPath)))
 	{
-		// Re-Check provided git binary path for each change
-		GitSourceControl.GetProvider().CheckGitAvailability();
-		if(GitSourceControl.GetProvider().IsGitAvailable())
-		{
-			GitSourceControl.SaveSettings();
-		}
+		return;
+	}
+
+	const TSharedPtr<FGitLFSSourceControlProvider> Provider = Module.GetProvider();
+	if (!Provider)
+	{
+		return;
+	}
+
+	// Re-Check provided git binary path for each change
+	Provider->CheckGitAvailability();
+	if (Provider->IsGitAvailable())
+	{
+		Module.SaveSettings();
 	}
 }
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 FText SGitLFSSourceControlSettings::GetPathToRepositoryRoot() const
 {
-	const FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	const FString& PathToRepositoryRoot = GitSourceControl.GetProvider().GetPathToRepositoryRoot();
-	return FText::FromString(PathToRepositoryRoot);
+	const TSharedPtr<FGitLFSSourceControlProvider>& Provider = FGitLFSSourceControlModule::Get().GetProvider();
+	if (!ensure(Provider))
+	{
+		return {};
+	}
+
+	return FText::FromString(Provider->GetPathToRepositoryRoot());
 }
 
 FText SGitLFSSourceControlSettings::GetUserName() const
 {
-	const FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	const FString& UserName = GitSourceControl.GetProvider().GetUserName();
-	return FText::FromString(UserName);
+	const TSharedPtr<FGitLFSSourceControlProvider>& Provider = FGitLFSSourceControlModule::Get().GetProvider();
+	if (!ensure(Provider))
+	{
+		return {};
+	}
+
+	return FText::FromString(Provider->GetUserName());
 }
 
 FText SGitLFSSourceControlSettings::GetUserEmail() const
 {
-	const FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	const FString& UserEmail = GitSourceControl.GetProvider().GetUserEmail();
-	return FText::FromString(UserEmail);
+	const TSharedPtr<FGitLFSSourceControlProvider>& Provider = FGitLFSSourceControlModule::Get().GetProvider();
+	if (!ensure(Provider))
+	{
+		return {};
+	}
+
+	return FText::FromString(Provider->GetUserEmail());
 }
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 EVisibility SGitLFSSourceControlSettings::MustInitializeGitRepository() const
 {
-	const FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	const bool bGitAvailable = GitSourceControl.GetProvider().IsGitAvailable();
-	const bool bGitRepositoryFound = GitSourceControl.GetProvider().IsEnabled();
+	const TSharedPtr<FGitLFSSourceControlProvider>& Provider = FGitLFSSourceControlModule::Get().GetProvider();
+	if (!ensure(Provider))
+	{
+		return EVisibility::Collapsed;
+	}
+
+	const bool bGitAvailable = Provider->IsGitAvailable();
+	const bool bGitRepositoryFound = Provider->IsEnabled();
 #if 0
-	return (bGitAvailable && !bGitRepositoryFound) ? EVisibility::Visible : EVisibility::Collapsed;
+	return bGitAvailable && !bGitRepositoryFound ? EVisibility::Visible : EVisibility::Collapsed;
 #else
 	return EVisibility::Collapsed;
 #endif
@@ -657,11 +534,17 @@ EVisibility SGitLFSSourceControlSettings::MustInitializeGitRepository() const
 
 bool SGitLFSSourceControlSettings::CanInitializeGitRepository() const
 {
-	const FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	const bool bGitAvailable = GitSourceControl.GetProvider().IsGitAvailable();
-	const bool bGitRepositoryFound = GitSourceControl.GetProvider().IsEnabled();
-	const FString& LfsUserName = GitSourceControl.AccessSettings().GetLfsUserName();
-	const bool bIsUsingGitLfsLocking = GitSourceControl.GetProvider().UsesCheckout();
+	FGitLFSSourceControlModule& Module = FGitLFSSourceControlModule::Get();
+	const TSharedPtr<FGitLFSSourceControlProvider>& Provider = Module.GetProvider();
+	if (!ensure(Provider))
+	{
+		return false;
+	}
+
+	const bool bGitAvailable = Provider->IsGitAvailable();
+	const bool bGitRepositoryFound = Provider->IsEnabled();
+	const FString& LfsUserName = Module.GetSettings().GetLfsUserName();
+	const bool bIsUsingGitLfsLocking = Provider->UsesCheckout();
 	const bool bGitLfsConfigOk = !bIsUsingGitLfsLocking || !LfsUserName.IsEmpty();
 	const bool bInitialCommitConfigOk = !bAutoInitialCommit || !InitialCommitMessage.IsEmpty();
 #if 0
@@ -673,34 +556,41 @@ bool SGitLFSSourceControlSettings::CanInitializeGitRepository() const
 
 bool SGitLFSSourceControlSettings::CanUseGitLfsLocking() const
 {
-	const FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
 	// TODO LFS SRombauts : check if .gitattributes file is present and if Content/ is already tracked!
 	const bool bGitAttributesCreated = true;
 	return (bAutoCreateGitAttributes || bGitAttributesCreated);
 }
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 FReply SGitLFSSourceControlSettings::OnClickedInitializeGitRepository()
 {
-	FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	const FString& PathToGitBinary = GitSourceControl.AccessSettings().GetBinaryPath();
+	FGitLFSSourceControlModule& Module = FGitLFSSourceControlModule::Get();
+	const TSharedPtr<FGitLFSSourceControlProvider> Provider = Module.GetProvider();
+	if (!ensure(Provider))
+	{
+		return FReply::Handled();
+	}
+
+	const FString& PathToGitBinary = Module.GetSettings().GetBinaryPath();
 	const FString PathToProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-	TArray<FString> InfoMessages;
-	TArray<FString> ErrorMessages;
+
+	FGitLFSCommandHelpers Helpers(PathToGitBinary, PathToProjectDir);
 
 	// 1.a. Synchronous (very quick) "git init" operation: initialize a Git local repository with a .git/ subdirectory
-	GitLFSSourceControlUtils::RunCommand(TEXT("init"), PathToGitBinary, PathToProjectDir, FGitLFSSourceControlModule::GetEmptyStringArray(), FGitLFSSourceControlModule::GetEmptyStringArray(), InfoMessages, ErrorMessages);
+	Helpers.RunInit();
 	// 1.b. Synchronous (very quick) "git remote add" operation: configure the URL of the default remote server 'origin' if specified
-	if(!RemoteUrl.IsEmpty())
+	if (!RemoteUrl.IsEmpty())
 	{
-		TArray<FString> Parameters;
-		Parameters.Add(TEXT("add origin"));
-		Parameters.Add(RemoteUrl.ToString());
-		GitLFSSourceControlUtils::RunCommand(TEXT("remote"), PathToGitBinary, PathToProjectDir, Parameters, FGitLFSSourceControlModule::GetEmptyStringArray(), InfoMessages, ErrorMessages);
+		Helpers.RunAddOrigin(RemoteUrl.ToString());
 	}
 
 	// Check the new repository status to enable connection (branch, user e-mail)
-	GitSourceControl.GetProvider().CheckGitAvailability();
-	if(GitSourceControl.GetProvider().IsAvailable())
+	Provider->CheckGitAvailability();
+
+	if (Provider->IsAvailable())
 	{
 		// List of files to add to Revision Control (.uproject, Config/, Content/, Source/ files and .gitignore/.gitattributes if any)
 		TArray<FString> ProjectFiles;
@@ -711,17 +601,19 @@ FReply SGitLFSSourceControlSettings::OnClickedInitializeGitRepository()
 		{
 			ProjectFiles.Add(FPaths::GameSourceDir());
 		}
-		if(bAutoCreateGitIgnore)
+
+		if (bAutoCreateGitIgnore)
 		{
 			// 2.a. Create a standard ".gitignore" file with common patterns for a typical Blueprint & C++ project
 			const FString GitIgnoreFilename = FPaths::Combine(FPaths::ProjectDir(), TEXT(".gitignore"));
 			const FString GitIgnoreContent = TEXT("Binaries\nDerivedDataCache\nIntermediate\nSaved\n.vscode\n.vs\n*.VC.db\n*.opensdf\n*.opendb\n*.sdf\n*.sln\n*.suo\n*.xcodeproj\n*.xcworkspace\n*.log");
-			if(FFileHelper::SaveStringToFile(GitIgnoreContent, *GitIgnoreFilename, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			if (FFileHelper::SaveStringToFile(GitIgnoreContent, *GitIgnoreFilename, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 			{
 				ProjectFiles.Add(GitIgnoreFilename);
 			}
 		}
-		if(bAutoCreateReadme)
+
+		if (bAutoCreateReadme)
 		{
 			// 2.b. Create a "README.md" file with a custom description
 			const FString ReadmeFilename = FPaths::Combine(FPaths::ProjectDir(), TEXT("README.md"));
@@ -730,15 +622,16 @@ FReply SGitLFSSourceControlSettings::OnClickedInitializeGitRepository()
 				ProjectFiles.Add(ReadmeFilename);
 			}
 		}
-		if(bAutoCreateGitAttributes)
+
+		if (bAutoCreateGitAttributes)
 		{
 			// 2.c. Synchronous (very quick) "lfs install" operation: needs only to be run once by user
-			GitLFSSourceControlUtils::RunCommand(TEXT("install"), PathToGitBinary, PathToProjectDir, FGitLFSSourceControlModule::GetEmptyStringArray(), FGitLFSSourceControlModule::GetEmptyStringArray(), InfoMessages, ErrorMessages);
+			Helpers.RunLFSInstall();
 
 			// 2.d. Create a ".gitattributes" file to enable Git LFS (Large File System) for the whole "Content/" subdir
 			const FString GitAttributesFilename = FPaths::Combine(FPaths::ProjectDir(), TEXT(".gitattributes"));
 			FString GitAttributesContent;
-			if (GitSourceControl.GetProvider().UsesCheckout())
+			if (Provider->UsesCheckout())
 			{
 				// Git LFS 2.x File Locking mechanism
 				GitAttributesContent = TEXT("Content/** filter=lfs diff=lfs merge=lfs -text lockable\n");
@@ -747,7 +640,8 @@ FReply SGitLFSSourceControlSettings::OnClickedInitializeGitRepository()
 			{
 				GitAttributesContent = TEXT("Content/** filter=lfs diff=lfs merge=lfs -text\n");
 			}
-			if(FFileHelper::SaveStringToFile(GitAttributesContent, *GitAttributesFilename, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+
+			if (FFileHelper::SaveStringToFile(GitAttributesContent, *GitAttributesFilename, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 			{
 				ProjectFiles.Add(GitAttributesFilename);
 			}
@@ -757,131 +651,28 @@ FReply SGitLFSSourceControlSettings::OnClickedInitializeGitRepository()
 		LaunchMarkForAddOperation(ProjectFiles);
 
 		// 4. The CheckIn will follow, at completion of the MarkForAdd operation
-		FGitLFSSourceControlProvider& Provider = FGitLFSSourceControlModule::Get().GetProvider();
-		Provider.CheckRepositoryStatus();
+		Provider->CheckRepositoryStatus();
 	}
 	return FReply::Handled();
 }
 
-// Launch an asynchronous "MarkForAdd" operation and start an ongoing notification
-void SGitLFSSourceControlSettings::LaunchMarkForAddOperation(const TArray<FString>& InFiles)
+void SGitLFSSourceControlSettings::OnCheckedCreateGitIgnore(const ECheckBoxState NewCheckedState)
 {
-	FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	TSharedRef<FMarkForAdd, ESPMode::ThreadSafe> MarkForAddOperation = ISourceControlOperation::Create<FMarkForAdd>();
-#if ENGINE_MAJOR_VERSION >= 5
-	ECommandResult::Type Result = GitSourceControl.GetProvider().Execute(MarkForAddOperation, FSourceControlChangelistPtr(), InFiles, EConcurrency::Asynchronous, FSourceControlOperationComplete::CreateSP(this, &SGitLFSSourceControlSettings::OnSourceControlOperationComplete));
-#else
-	ECommandResult::Type Result = GitSourceControl.GetProvider().Execute(MarkForAddOperation, InFiles, EConcurrency::Asynchronous, FSourceControlOperationComplete::CreateSP(this, &SGitLFSSourceControlSettings::OnSourceControlOperationComplete));
-#endif
-	if (Result == ECommandResult::Succeeded)
-	{
-		DisplayInProgressNotification(MarkForAddOperation);
-	}
-	else
-	{
-		DisplayFailureNotification(MarkForAddOperation);
-	}
+	bAutoCreateGitIgnore = NewCheckedState == ECheckBoxState::Checked;
 }
 
-// Launch an asynchronous "CheckIn" operation and start another ongoing notification
-void SGitLFSSourceControlSettings::LaunchCheckInOperation()
+void SGitLFSSourceControlSettings::OnCheckedCreateGitAttributes(const ECheckBoxState NewCheckedState)
 {
-	TSharedRef<FCheckIn, ESPMode::ThreadSafe> CheckInOperation = ISourceControlOperation::Create<FCheckIn>();
-	CheckInOperation->SetDescription(InitialCommitMessage);
-	FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-#if ENGINE_MAJOR_VERSION >= 5
-	ECommandResult::Type Result = GitSourceControl.GetProvider().Execute(CheckInOperation, FSourceControlChangelistPtr(), FGitLFSSourceControlModule::GetEmptyStringArray(), EConcurrency::Asynchronous, FSourceControlOperationComplete::CreateSP(this, &SGitLFSSourceControlSettings::OnSourceControlOperationComplete));
-#else
-	ECommandResult::Type Result = GitSourceControl.GetProvider().Execute(CheckInOperation, FGitLFSSourceControlModule::GetEmptyStringArray(), EConcurrency::Asynchronous, FSourceControlOperationComplete::CreateSP(this, &SGitLFSSourceControlSettings::OnSourceControlOperationComplete));
-#endif
-	if (Result == ECommandResult::Succeeded)
-	{
-		DisplayInProgressNotification(CheckInOperation);
-	}
-	else
-	{
-		DisplayFailureNotification(CheckInOperation);
-	}
+	bAutoCreateGitAttributes = NewCheckedState == ECheckBoxState::Checked;
 }
 
-/// Delegate called when a Revision control operation has completed: launch the next one and manage notifications
-void SGitLFSSourceControlSettings::OnSourceControlOperationComplete(const FSourceControlOperationRef& InOperation, ECommandResult::Type InResult)
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void SGitLFSSourceControlSettings::OnCheckedCreateReadme(const ECheckBoxState NewCheckedState)
 {
-	RemoveInProgressNotification();
-
-	// Report result with a notification
-	if (InResult == ECommandResult::Succeeded)
-	{
-		DisplaySuccessNotification(InOperation);
-	}
-	else
-	{
-		DisplayFailureNotification(InOperation);
-	}
-
-	if ((InOperation->GetName() == "MarkForAdd") && (InResult == ECommandResult::Succeeded) && bAutoInitialCommit)
-	{
-		// 4. optional initial Asynchronous commit with custom message: launch a "CheckIn" Operation
-		LaunchCheckInOperation();
-	}
-}
-
-
-// Display an ongoing notification during the whole operation
-void SGitLFSSourceControlSettings::DisplayInProgressNotification(const FSourceControlOperationRef& InOperation)
-{
-	FNotificationInfo Info(InOperation->GetInProgressString());
-	Info.bFireAndForget = false;
-	Info.ExpireDuration = 0.0f;
-	Info.FadeOutDuration = 1.0f;
-	OperationInProgressNotification = FSlateNotificationManager::Get().AddNotification(Info);
-	if (OperationInProgressNotification.IsValid())
-	{
-		OperationInProgressNotification.Pin()->SetCompletionState(SNotificationItem::CS_Pending);
-	}
-}
-
-// Remove the ongoing notification at the end of the operation
-void SGitLFSSourceControlSettings::RemoveInProgressNotification()
-{
-	if (OperationInProgressNotification.IsValid())
-	{
-		OperationInProgressNotification.Pin()->ExpireAndFadeout();
-		OperationInProgressNotification.Reset();
-	}
-}
-
-// Display a temporary success notification at the end of the operation
-void SGitLFSSourceControlSettings::DisplaySuccessNotification(const FSourceControlOperationRef& InOperation)
-{
-	const FText NotificationText = FText::Format(LOCTEXT("InitialCommit_Success", "{0} operation was successfull!"), FText::FromName(InOperation->GetName()));
-	FNotificationInfo Info(NotificationText);
-	Info.bUseSuccessFailIcons = true;
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1
-	Info.Image = FAppStyle::GetBrush(TEXT("NotificationList.SuccessImage"));
-#else
-	Info.Image = FEditorStyle::GetBrush(TEXT("NotificationList.SuccessImage"));
-#endif
-	FSlateNotificationManager::Get().AddNotification(Info);
-}
-
-// Display a temporary failure notification at the end of the operation
-void SGitLFSSourceControlSettings::DisplayFailureNotification(const FSourceControlOperationRef& InOperation)
-{
-	const FText NotificationText = FText::Format(LOCTEXT("InitialCommit_Failure", "Error: {0} operation failed!"), FText::FromName(InOperation->GetName()));
-	FNotificationInfo Info(NotificationText);
-	Info.ExpireDuration = 8.0f;
-	FSlateNotificationManager::Get().AddNotification(Info);
-}
-
-void SGitLFSSourceControlSettings::OnCheckedCreateGitIgnore(ECheckBoxState NewCheckedState)
-{
-	bAutoCreateGitIgnore = (NewCheckedState == ECheckBoxState::Checked);
-}
-
-void SGitLFSSourceControlSettings::OnCheckedCreateReadme(ECheckBoxState NewCheckedState)
-{
-	bAutoCreateReadme = (NewCheckedState == ECheckBoxState::Checked);
+	bAutoCreateReadme = NewCheckedState == ECheckBoxState::Checked;
 }
 
 bool SGitLFSSourceControlSettings::GetAutoCreateReadme() const
@@ -889,7 +680,7 @@ bool SGitLFSSourceControlSettings::GetAutoCreateReadme() const
 	return bAutoCreateReadme;
 }
 
-void SGitLFSSourceControlSettings::OnReadmeContentCommited(const FText& InText, ETextCommit::Type InCommitType)
+void SGitLFSSourceControlSettings::OnReadmeContentCommited(const FText& InText, ETextCommit::Type)
 {
 	ReadmeContent = InText;
 }
@@ -899,59 +690,71 @@ FText SGitLFSSourceControlSettings::GetReadmeContent() const
 	return ReadmeContent;
 }
 
-void SGitLFSSourceControlSettings::OnCheckedCreateGitAttributes(ECheckBoxState NewCheckedState)
-{
-	bAutoCreateGitAttributes = (NewCheckedState == ECheckBoxState::Checked);
-}
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
-void SGitLFSSourceControlSettings::OnCheckedUseGitLfsLocking(ECheckBoxState NewCheckedState)
+void SGitLFSSourceControlSettings::OnCheckedUseGitLfsLocking(const ECheckBoxState NewCheckedState)
 {
-	FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	GitSourceControl.AccessSettings().SetUsingGitLfsLocking(NewCheckedState == ECheckBoxState::Checked);
-	GitSourceControl.AccessSettings().SaveSettings();
-	GitSourceControl.GetProvider().UpdateSettings();
-}
+	FGitLFSSourceControlModule& Module = FGitLFSSourceControlModule::Get();
+	Module.GetSettings().SetUsingGitLfsLocking(NewCheckedState == ECheckBoxState::Checked);
+	Module.GetSettings().SaveSettings();
 
-bool SGitLFSSourceControlSettings::GetIsUsingGitLfsLocking() const
-{
-	const FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	return GitSourceControl.AccessSettings().IsUsingGitLfsLocking();
+	if (const TSharedPtr<FGitLFSSourceControlProvider> Provider = Module.GetProvider())
+	{
+		Provider->UpdateSettings();
+	}
 }
 
 ECheckBoxState SGitLFSSourceControlSettings::IsUsingGitLfsLocking() const
 {
-	return (GetIsUsingGitLfsLocking() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked);
+	return GetIsUsingGitLfsLocking() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 }
 
-void SGitLFSSourceControlSettings::OnLfsUserNameCommited(const FText& InText, ETextCommit::Type InCommitType)
+bool SGitLFSSourceControlSettings::GetIsUsingGitLfsLocking() const
 {
-	FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	GitSourceControl.AccessSettings().SetLfsUserName(InText.ToString());
-	GitSourceControl.AccessSettings().SaveSettings();
-	GitSourceControl.GetProvider().UpdateSettings();
+	return FGitLFSSourceControlModule::Get().GetSettings().IsUsingGitLfsLocking();
+}
+
+void SGitLFSSourceControlSettings::OnLfsUserNameCommited(const FText& InText, ETextCommit::Type)
+{
+	FGitLFSSourceControlModule& Module = FGitLFSSourceControlModule::Get();
+	Module.GetSettings().SetLfsUserName(InText.ToString());
+	Module.GetSettings().SaveSettings();
+
+	if (const TSharedPtr<FGitLFSSourceControlProvider> Provider = Module.GetProvider())
+	{
+		Provider->UpdateSettings();
+	}
 }
 
 FText SGitLFSSourceControlSettings::GetLfsUserName() const
 {
-	FGitLFSSourceControlModule& GitSourceControl = FGitLFSSourceControlModule::Get();
-	const FString LFSUserName = GitSourceControl.AccessSettings().GetLfsUserName();
+	FGitLFSSourceControlModule& Module = FGitLFSSourceControlModule::Get();
+	const FString LFSUserName = Module.GetSettings().GetLfsUserName();
 	if (LFSUserName.IsEmpty())
 	{
 		const FText& UserName = GetUserName();
-		GitSourceControl.AccessSettings().SetLfsUserName(UserName.ToString());
-		GitSourceControl.AccessSettings().SaveSettings();
-		GitSourceControl.GetProvider().UpdateSettings();
+		Module.GetSettings().SetLfsUserName(UserName.ToString());
+		Module.GetSettings().SaveSettings();
+
+		if (const TSharedPtr<FGitLFSSourceControlProvider> Provider = Module.GetProvider())
+		{
+			Provider->UpdateSettings();
+		}
 		return UserName;
 	}
-	else
-	{
-		return FText::FromString(LFSUserName);
-	}
+
+	return FText::FromString(LFSUserName);
 }
 
-void SGitLFSSourceControlSettings::OnCheckedInitialCommit(ECheckBoxState NewCheckedState)
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void SGitLFSSourceControlSettings::OnCheckedInitialCommit(const ECheckBoxState NewCheckedState)
 {
-	bAutoInitialCommit = (NewCheckedState == ECheckBoxState::Checked);
+	bAutoInitialCommit = NewCheckedState == ECheckBoxState::Checked;
 }
 
 bool SGitLFSSourceControlSettings::GetAutoInitialCommit() const
@@ -969,7 +772,11 @@ FText SGitLFSSourceControlSettings::GetInitialCommitMessage() const
 	return InitialCommitMessage;
 }
 
-void SGitLFSSourceControlSettings::OnRemoteUrlCommited(const FText& InText, ETextCommit::Type InCommitType)
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void SGitLFSSourceControlSettings::OnRemoteUrlCommited(const FText& InText, ETextCommit::Type)
 {
 	RemoteUrl = InText;
 }
@@ -977,6 +784,134 @@ void SGitLFSSourceControlSettings::OnRemoteUrlCommited(const FText& InText, ETex
 FText SGitLFSSourceControlSettings::GetRemoteUrl() const
 {
 	return RemoteUrl;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void SGitLFSSourceControlSettings::LaunchMarkForAddOperation(const TArray<FString>& InFiles)
+{
+	const TSharedPtr<FGitLFSSourceControlProvider> Provider = FGitLFSSourceControlModule::Get().GetProvider();
+	if (!ensure(Provider))
+	{
+		return;
+	}
+
+	const TSharedRef<FMarkForAdd> MarkForAddOperation = ISourceControlOperation::Create<FMarkForAdd>();
+	const ECommandResult::Type Result = Provider->ExecuteNoChangeList(
+		MarkForAddOperation,
+		InFiles,
+		EConcurrency::Asynchronous,
+		FSourceControlOperationComplete::CreateSP(this, &SGitLFSSourceControlSettings::OnSourceControlOperationComplete));
+
+	if (Result == ECommandResult::Succeeded)
+	{
+		DisplayInProgressNotification(MarkForAddOperation);
+	}
+	else
+	{
+		DisplayFailureNotification(MarkForAddOperation);
+	}
+}
+
+void SGitLFSSourceControlSettings::LaunchCheckInOperation()
+{
+	const TSharedPtr<FGitLFSSourceControlProvider> Provider = FGitLFSSourceControlModule::Get().GetProvider();
+	if (!ensure(Provider))
+	{
+		return;
+	}
+
+	const TSharedRef<FCheckIn> CheckInOperation = ISourceControlOperation::Create<FCheckIn>();
+	CheckInOperation->SetDescription(InitialCommitMessage);
+
+	const ECommandResult::Type Result = Provider->ExecuteNoChangeList(
+		CheckInOperation,
+		{},
+		EConcurrency::Asynchronous,
+		FSourceControlOperationComplete::CreateSP(this, &SGitLFSSourceControlSettings::OnSourceControlOperationComplete));
+
+	if (Result == ECommandResult::Succeeded)
+	{
+		DisplayInProgressNotification(CheckInOperation);
+	}
+	else
+	{
+		DisplayFailureNotification(CheckInOperation);
+	}
+}
+
+void SGitLFSSourceControlSettings::OnSourceControlOperationComplete(const FSourceControlOperationRef& InOperation, const ECommandResult::Type InResult)
+{
+	RemoveInProgressNotification();
+
+	// Report result with a notification
+	if (InResult == ECommandResult::Succeeded)
+	{
+		DisplaySuccessNotification(InOperation);
+	}
+	else
+	{
+		DisplayFailureNotification(InOperation);
+	}
+
+	if (InOperation->GetName() == "MarkForAdd" &&
+		InResult == ECommandResult::Succeeded &&
+		bAutoInitialCommit)
+	{
+		// 4. optional initial Asynchronous commit with custom message: launch a "CheckIn" Operation
+		LaunchCheckInOperation();
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void SGitLFSSourceControlSettings::DisplayInProgressNotification(const FSourceControlOperationRef& InOperation)
+{
+	FNotificationInfo Info(InOperation->GetInProgressString());
+	Info.bFireAndForget = false;
+	Info.ExpireDuration = 0.0f;
+	Info.FadeOutDuration = 1.0f;
+
+	OperationInProgressNotification = FSlateNotificationManager::Get().AddNotification(Info);
+
+	if (OperationInProgressNotification.IsValid())
+	{
+		OperationInProgressNotification.Pin()->SetCompletionState(SNotificationItem::CS_Pending);
+	}
+}
+
+void SGitLFSSourceControlSettings::RemoveInProgressNotification()
+{
+	if (OperationInProgressNotification.IsValid())
+	{
+		OperationInProgressNotification.Pin()->ExpireAndFadeout();
+		OperationInProgressNotification.Reset();
+	}
+}
+
+void SGitLFSSourceControlSettings::DisplaySuccessNotification(const FSourceControlOperationRef& InOperation)
+{
+	const FText NotificationText = FText::Format(LOCTEXT("InitialCommit_Success", "{0} operation was successfull!"), FText::FromName(InOperation->GetName()));
+
+	FNotificationInfo Info(NotificationText);
+	Info.bUseSuccessFailIcons = true;
+	Info.Image = FEditorAppStyle::GetBrush(TEXT("NotificationList.SuccessImage"));
+
+	FSlateNotificationManager::Get().AddNotification(Info);
+}
+
+void SGitLFSSourceControlSettings::DisplayFailureNotification(const FSourceControlOperationRef& InOperation)
+{
+	const FText NotificationText = FText::Format(LOCTEXT("InitialCommit_Failure", "Error: {0} operation failed!"), FText::FromName(InOperation->GetName()));
+
+	FNotificationInfo Info(NotificationText);
+	Info.ExpireDuration = 8.0f;
+
+	FSlateNotificationManager::Get().AddNotification(Info);
 }
 
 #undef LOCTEXT_NAMESPACE

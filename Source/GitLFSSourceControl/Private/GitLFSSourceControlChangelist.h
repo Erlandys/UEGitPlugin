@@ -1,5 +1,12 @@
-﻿#pragma once
+﻿// Copyright (c) 2014-2020 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+//
+// Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
+// or copy at http://opensource.org/licenses/MIT)
+
+#pragma once
+
 #include "ISourceControlChangelist.h"
+#include "GitLFSSourceControlHelpers.h"
 
 class FGitLFSSourceControlChangelist : public ISourceControlChangelist
 {
@@ -8,7 +15,7 @@ public:
 
 	explicit FGitLFSSourceControlChangelist(FString&& InChangelistName, const bool bInInitialized = false)
 		: ChangelistName(MoveTemp(InChangelistName))
-		  , bInitialized(bInInitialized)
+		 , bInitialized(bInInitialized)
 	{
 	}
 
@@ -27,7 +34,7 @@ public:
 		return ChangelistName != InOther.ChangelistName;
 	}
 
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 3
+#if GIT_ENGINE_VERSION >= 503
 	virtual bool IsDefault() const override
 	{
 		return ChangelistName == WorkingChangelist.ChangelistName;
@@ -75,5 +82,3 @@ private:
 	FString ChangelistName;
 	bool bInitialized = false;
 };
-
-typedef TSharedRef<class FGitLFSSourceControlChangelist, ESPMode::ThreadSafe> FGitSourceControlChangelistRef;

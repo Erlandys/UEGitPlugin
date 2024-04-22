@@ -5,60 +5,69 @@
 
 #include "GitLFSSourceControlModule.h"
 
-#include "AssetToolsModule.h"
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1
-#include "Styling/AppStyle.h"
-#else
-#include "EditorStyleSet.h"
-#endif
 #include "Misc/App.h"
+#include "AssetToolsModule.h"
+#include "ContentBrowserModule.h"
 #include "Modules/ModuleManager.h"
+#include "ContentBrowserDelegates.h"
 #include "Features/IModularFeatures.h"
 
-#include "ContentBrowserModule.h"
-#include "ContentBrowserDelegates.h"
-
-#include "GitLFSSourceControlOperations.h"
-#include "GitLFSSourceControlUtils.h"
 #include "ISourceControlModule.h"
 #include "SourceControlHelpers.h"
+#include "GitLFSSourceControlUtils.h"
 #include "Framework/Commands/UIAction.h"
 #include "Framework/MultiBox/MultiBoxExtender.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 
+#include "Operations/GitLFSCopy.h"
+#include "Operations/GitLFSSync.h"
+#include "Operations/GitLFSFetch.h"
+#include "Operations/GitLFSDelete.h"
+#include "Operations/GitLFSRevert.h"
+#include "Operations/GitLFSCheckIn.h"
+#include "Operations/GitLFSConnect.h"
+#include "Operations/GitLFSResolve.h"
+#include "Operations/GitLFSCheckOut.h"
+#include "Operations/GitLFSMarkForAdd.h"
+#include "Operations/GitLFSUpdateStatus.h"
+#include "Operations/GitLFSUpdateStaging.h"
+#include "Operations/GitLFSMoveToChangelist.h"
+
+#if GIT_ENGINE_VERSION >= 501
+#include "Styling/AppStyle.h"
+#else
+#include "EditorStyleSet.h"
+#endif
+
 #define LOCTEXT_NAMESPACE "GitSourceControl"
-
-TArray<FString> FGitLFSSourceControlModule::EmptyStringArray;
-
-template<typename Type>
-static TSharedRef<IGitLFSSourceControlWorker, ESPMode::ThreadSafe> CreateWorker()
-{
-	return MakeShareable( new Type() );
-}
 
 void FGitLFSSourceControlModule::StartupModule()
 {
+	Provider = MakeShared<FGitLFSSourceControlProvider>();
+
 	// Register our operations (implemented in GitSourceControlOperations.cpp by subclassing from Engine\Source\Developer\SourceControl\Public\SourceControlOperations.h)
-	GitSourceControlProvider.RegisterWorker( "Connect", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSConnectWorker> ) );
-	// Note: this provider uses the "CheckOut" command only with Git LFS 2 "lock" command, since Git itself has no lock command (all tracked files in the working copy are always already checked-out).
-	GitSourceControlProvider.RegisterWorker( "CheckOut", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSCheckOutWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "UpdateStatus", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSUpdateStatusWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "MarkForAdd", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSMarkForAddWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "Delete", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSDeleteWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "Revert", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSRevertWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "Sync", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSSyncWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "Fetch", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSFetchWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "CheckIn", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSCheckInWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "Copy", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSCopyWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "Resolve", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSResolveWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "MoveToChangelist", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSMoveToChangelistWorker> ) );
-	GitSourceControlProvider.RegisterWorker( "UpdateChangelistsStatus", FGetGitSourceControlWorker::CreateStatic( &CreateWorker<FGitLFSUpdateStagingWorker> ) );
+	Provider->RegisterWorker<FGitLFSConnectWorker>();
+
+	// Note:->this provider uses the "CheckOut" command only with Git LFS 2 "lock" command, since Git itself has no lock command (all tracked files in the working copy are always already checked-out).
+	Provider->RegisterWorker<FGitLFSCheckOutWorker>();
+
+	Provider->RegisterWorker<FGitLFSUpdateStatusWorker>();
+	Provider->RegisterWorker<FGitLFSMarkForAddWorker>();
+	Provider->RegisterWorker<FGitLFSDeleteWorker>();
+	Provider->RegisterWorker<FGitLFSRevertWorker>();
+	Provider->RegisterWorker<FGitLFSSyncWorker>();
+	Provider->RegisterWorker<FGitLFSFetchWorker>();
+	Provider->RegisterWorker<FGitLFSCheckInWorker>();
+	Provider->RegisterWorker<FGitLFSCopyWorker>();
+	Provider->RegisterWorker<FGitLFSResolveWorker>();
+	Provider->RegisterWorker<FGitLFSMoveToChangelistWorker>();
+	Provider->RegisterWorker<FGitLFSUpdateStagingWorker>();
 
 	// load our settings
 	GitSourceControlSettings.LoadSettings();
 
 	// Bind our revision control provider to the editor
-	IModularFeatures::Get().RegisterModularFeature( "SourceControl", &GitSourceControlProvider );
+	IModularFeatures::Get().RegisterModularFeature("SourceControl", &*Provider);
 
 	FContentBrowserModule& ContentBrowserModule = FModuleManager::Get().LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
 
@@ -69,44 +78,63 @@ void FGitLFSSourceControlModule::StartupModule()
 	// Values here are 1 or 2 based on whether the change can be done immediately or needs to be delayed as unreal needs to work through its internal delegates first
 	// >> Technically you wouldn't need to use `GetOnAssetSelectionChanged` -- but it's there as a safety mechanism. States aren't forceupdated for the first path that loads
 	// >> Making sure we force an update on selection change that acts like a just in case other measures fail
-	CbdHandle_OnFilterChanged = ContentBrowserModule.GetOnFilterChanged().AddLambda( [this]( const FARFilter&, bool ) { GitSourceControlProvider.TicksUntilNextForcedUpdate = 2; } );
-	CbdHandle_OnSearchBoxChanged = ContentBrowserModule.GetOnSearchBoxChanged().AddLambda( [this]( const FText&, bool ){ GitSourceControlProvider.TicksUntilNextForcedUpdate = 1; } );
-	CbdHandle_OnAssetSelectionChanged = ContentBrowserModule.GetOnAssetSelectionChanged().AddLambda( [this]( const TArray<FAssetData>&, bool ) { GitSourceControlProvider.TicksUntilNextForcedUpdate = 1; } );
-	CbdHandle_OnAssetPathChanged = ContentBrowserModule.GetOnAssetPathChanged().AddLambda( [this]( const FString& ) { GitSourceControlProvider.TicksUntilNextForcedUpdate = 2; } );
+	OnFilterChangedHandle = ContentBrowserModule.GetOnFilterChanged().AddLambda( [this](const FARFilter&, bool)
+	{
+		Provider->TicksUntilNextForcedUpdate = 2;
+	} );
+	OnSearchBoxChangedHandle = ContentBrowserModule.GetOnSearchBoxChanged().AddLambda( [this](const FText&, bool)
+	{
+		Provider->TicksUntilNextForcedUpdate = 1;
+	} );
+	OnAssetSelectionChangedHandle = ContentBrowserModule.GetOnAssetSelectionChanged().AddLambda( [this](const TArray<FAssetData>&, bool)
+	{
+		Provider->TicksUntilNextForcedUpdate = 1;
+	} );
+	OnAssetPathChangedHandle = ContentBrowserModule.GetOnAssetPathChanged().AddLambda( [this](const FString&)
+	{
+		Provider->TicksUntilNextForcedUpdate = 2;
+	} );
 #endif
 
 	TArray<FContentBrowserMenuExtender_SelectedAssets>& CBAssetMenuExtenderDelegates = ContentBrowserModule.GetAllAssetViewContextMenuExtenders();
 	CBAssetMenuExtenderDelegates.Add(FContentBrowserMenuExtender_SelectedAssets::CreateRaw( this, &FGitLFSSourceControlModule::OnExtendContentBrowserAssetSelectionMenu ));
-	CbdHandle_OnExtendAssetSelectionMenu = CBAssetMenuExtenderDelegates.Last().GetHandle();
+	OnExtendAssetSelectionMenuHandle = CBAssetMenuExtenderDelegates.Last().GetHandle();
 }
 
 void FGitLFSSourceControlModule::ShutdownModule()
 {
 	// shut down the provider, as this module is going away
-	GitSourceControlProvider.Close();
+	Provider->Close();
 
 	// unbind provider from editor
-	IModularFeatures::Get().UnregisterModularFeature("SourceControl", &GitSourceControlProvider);
+	IModularFeatures::Get().UnregisterModularFeature("SourceControl", &*Provider);
 
+	Provider = nullptr;
 
 	// Unregister ContentBrowserDelegate Handles
-    FContentBrowserModule & ContentBrowserModule = FModuleManager::Get().LoadModuleChecked< FContentBrowserModule >( "ContentBrowser" );
+    FContentBrowserModule & ContentBrowserModule = FModuleManager::Get().LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
 #if ENGINE_MAJOR_VERSION >= 5
-	ContentBrowserModule.GetOnFilterChanged().Remove( CbdHandle_OnFilterChanged );
-	ContentBrowserModule.GetOnSearchBoxChanged().Remove( CbdHandle_OnSearchBoxChanged );
-	ContentBrowserModule.GetOnAssetSelectionChanged().Remove( CbdHandle_OnAssetSelectionChanged );
-	ContentBrowserModule.GetOnAssetPathChanged().Remove( CbdHandle_OnAssetPathChanged );
+	ContentBrowserModule.GetOnFilterChanged().Remove(OnFilterChangedHandle);
+	ContentBrowserModule.GetOnSearchBoxChanged().Remove(OnSearchBoxChangedHandle);
+	ContentBrowserModule.GetOnAssetSelectionChanged().Remove(OnAssetSelectionChangedHandle);
+	ContentBrowserModule.GetOnAssetPathChanged().Remove(OnAssetPathChangedHandle);
 #endif
 	
 	TArray<FContentBrowserMenuExtender_SelectedAssets>& CBAssetMenuExtenderDelegates = ContentBrowserModule.GetAllAssetViewContextMenuExtenders();
-	CBAssetMenuExtenderDelegates.RemoveAll([ &ExtenderDelegateHandle = CbdHandle_OnExtendAssetSelectionMenu ]( const FContentBrowserMenuExtender_SelectedAssets& Delegate ) {
-		return Delegate.GetHandle() == ExtenderDelegateHandle;
+	CBAssetMenuExtenderDelegates.RemoveAll([this](const FContentBrowserMenuExtender_SelectedAssets& Delegate)
+	{
+		return Delegate.GetHandle() == OnExtendAssetSelectionMenuHandle;
 	});
 }
 
-void FGitLFSSourceControlModule::SaveSettings()
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void FGitLFSSourceControlModule::SaveSettings() const
 {
-	if (FApp::IsUnattended() || IsRunningCommandlet())
+	if (FApp::IsUnattended() ||
+		IsRunningCommandlet())
 	{
 		return;
 	}
@@ -114,14 +142,9 @@ void FGitLFSSourceControlModule::SaveSettings()
 	GitSourceControlSettings.SaveSettings();
 }
 
-void FGitLFSSourceControlModule::SetLastErrors(const TArray<FText>& InErrors)
-{
-	FGitLFSSourceControlModule* Module = FModuleManager::GetModulePtr<FGitLFSSourceControlModule>("GitLFSSourceControl");
-	if (Module)
-	{
-		Module->GetProvider().SetLastErrors(InErrors);
-	}
-}
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 TSharedRef<FExtender> FGitLFSSourceControlModule::OnExtendContentBrowserAssetSelectionMenu(const TArray<FAssetData>& SelectedAssets)
 {
@@ -131,7 +154,7 @@ TSharedRef<FExtender> FGitLFSSourceControlModule::OnExtendContentBrowserAssetSel
 		"AssetSourceControlActions",
 		EExtensionHook::After,
 		nullptr,
-		FMenuExtensionDelegate::CreateRaw( this, &FGitLFSSourceControlModule::CreateGitContentBrowserAssetMenu, SelectedAssets )
+		FMenuExtensionDelegate::CreateRaw(this, &FGitLFSSourceControlModule::CreateGitContentBrowserAssetMenu, SelectedAssets)
 	);
 
 	return Extender;
@@ -139,103 +162,148 @@ TSharedRef<FExtender> FGitLFSSourceControlModule::OnExtendContentBrowserAssetSel
 
 void FGitLFSSourceControlModule::CreateGitContentBrowserAssetMenu(FMenuBuilder& MenuBuilder, const TArray<FAssetData> SelectedAssets)
 {
-	if (!FGitLFSSourceControlModule::Get().GetProvider().GetStatusBranchNames().Num())
+	const TSharedPtr<FGitLFSSourceControlProvider> GitProvider = Get().GetProvider();
+	if (!GitProvider)
+	{
+		return;
+	}
+
+	if (!GitProvider->GetStatusBranchNames().Num())
 	{
 		return;
 	}
 	
-	const TArray<FString>& StatusBranchNames = FGitLFSSourceControlModule::Get().GetProvider().GetStatusBranchNames();
+	const TArray<FString>& StatusBranchNames = GitProvider->GetStatusBranchNames();
 	const FString& BranchName = StatusBranchNames[0];
 	MenuBuilder.AddMenuEntry(
 		FText::Format(LOCTEXT("StatusBranchDiff", "Diff against status branch"), FText::FromString(BranchName)),
 		FText::Format(LOCTEXT("StatusBranchDiffDesc", "Compare this asset to the latest status branch version"), FText::FromString(BranchName)),
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1
-		FSlateIcon(FAppStyle::GetAppStyleSetName(), "SourceControl.Actions.Diff"),
-#else
-		FSlateIcon(FEditorStyle::GetStyleSetName(), "SourceControl.Actions.Diff"),
-#endif
-		FUIAction(FExecuteAction::CreateRaw( this, &FGitLFSSourceControlModule::DiffAssetAgainstGitOriginBranch, SelectedAssets, BranchName ))
+		FSlateIcon(FGitLFSSourceControlUtils::GetAppStyleName(), "SourceControl.Actions.Diff"),
+		FUIAction(FExecuteAction::CreateRaw(this, &FGitLFSSourceControlModule::DiffAssetAgainstGitOriginBranch, SelectedAssets, BranchName))
 	);
 }
 
 void FGitLFSSourceControlModule::DiffAssetAgainstGitOriginBranch(const TArray<FAssetData> SelectedAssets, FString BranchName) const
 {
-	for (int32 AssetIdx = 0; AssetIdx < SelectedAssets.Num(); AssetIdx++)
+	for (const FAssetData& Asset : SelectedAssets)
 	{
-		// Get the actual asset (will load it)
-		const FAssetData& AssetData = SelectedAssets[AssetIdx];
-
-		if (UObject* CurrentObject = AssetData.GetAsset())
+		UObject* CurrentObject = Asset.GetAsset();
+		if (!CurrentObject)
 		{
-			const FString PackagePath = AssetData.PackageName.ToString();
-			const FString PackageName = AssetData.AssetName.ToString();
-			DiffAgainstOriginBranch(CurrentObject, PackagePath, PackageName, BranchName);
+			continue;
 		}
+
+		const FString PackagePath = Asset.PackageName.ToString();
+		const FString PackageName = Asset.AssetName.ToString();
+		DiffAgainstOriginBranch(CurrentObject, PackagePath, PackageName, BranchName);
 	}
 }
 
-void FGitLFSSourceControlModule::DiffAgainstOriginBranch( UObject * InObject, const FString & InPackagePath, const FString & InPackageName, const FString & BranchName ) const
+void FGitLFSSourceControlModule::DiffAgainstOriginBranch(UObject* InObject, const FString& InPackagePath, const FString& InPackageName, const FString& BranchName)
 {
 	check(InObject);
 
-	const FGitLFSSourceControlModule& GitSourceControl = FModuleManager::GetModuleChecked<FGitLFSSourceControlModule>("GitLFSSourceControl");
-	const FString& PathToGitBinary = GitSourceControl.AccessSettings().GetBinaryPath();
-	const FString& PathToRepositoryRoot = GitSourceControl.GetProvider().GetPathToRepositoryRoot();
-
-	ISourceControlProvider& SourceControlProvider = ISourceControlModule::Get().GetProvider();
-
-	const FAssetToolsModule& AssetToolsModule = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools");
+	const FGitLFSSourceControlModule& Module = Get();
+	const TSharedPtr<FGitLFSSourceControlProvider> Provider = Module.GetProvider();
+	if (!ensure(Provider))
+	{
+		return;
+	}
 
 	// Get the SCC state
-	const FSourceControlStatePtr SourceControlState = SourceControlProvider.GetState(SourceControlHelpers::PackageFilename(InPackagePath), EStateCacheUsage::Use);
+	const FSourceControlStatePtr SourceControlState = ISourceControlModule::Get().GetProvider().GetState(SourceControlHelpers::PackageFilename(InPackagePath), EStateCacheUsage::Use);
 
 	// If we have an asset and its in SCC..
-	if (SourceControlState.IsValid() && InObject != nullptr && SourceControlState->IsSourceControlled())
+	if (!SourceControlState.IsValid() ||
+		!InObject ||
+		!SourceControlState->IsSourceControlled())
 	{
-		// Get the file name of package
-		FString RelativeFileName;
-#if ENGINE_MAJOR_VERSION >= 5
-		if (FPackageName::DoesPackageExist(InPackagePath, &RelativeFileName))
-#else
-		if (FPackageName::DoesPackageExist(InPackagePath, nullptr, &RelativeFileName))
-#endif
-		{
-			// if(SourceControlState->GetHistorySize() > 0)
-			{
-				TArray<FString> Errors;
-				const auto& Revision = GitLFSSourceControlUtils::GetOriginRevisionOnBranch(PathToGitBinary, PathToRepositoryRoot, RelativeFileName, Errors, BranchName);
-
-				check(Revision.IsValid());
-
-				FString TempFileName;
-				if (Revision->Get(TempFileName))
-				{
-					// Try and load that package
-					UPackage* TempPackage = LoadPackage(nullptr, *TempFileName, LOAD_ForDiff | LOAD_DisableCompileOnLoad);
-					if (TempPackage != nullptr)
-					{
-						// Grab the old asset from that old package
-						UObject* OldObject = FindObject<UObject>(TempPackage, *InPackageName);
-						if (OldObject != nullptr)
-						{
-							/* Set the revision information*/
-							FRevisionInfo OldRevision;
-							OldRevision.Changelist = Revision->GetCheckInIdentifier();
-							OldRevision.Date = Revision->GetDate();
-							OldRevision.Revision = Revision->GetRevision();
-
-							FRevisionInfo NewRevision;
-							NewRevision.Revision = TEXT("");
-
-							AssetToolsModule.Get().DiffAssets(OldObject, InObject, OldRevision, NewRevision);
-						}
-					}
-				}
-			}
-		}
+		return;
 	}
+
+	// Get the file name of package
+	FString RelativeFileName;
+#if GIT_ENGINE_VERSION >= 500
+	if (!FPackageName::DoesPackageExist(InPackagePath, &RelativeFileName))
+#else
+	if (!FPackageName::DoesPackageExist(InPackagePath, nullptr, &RelativeFileName))
+#endif
+	{
+		return;
+	}
+
+	const FGitLFSCommandHelpers Helpers(*Provider);
+	TArray<FString> Errors;
+	const TSharedPtr<ISourceControlRevision> Revision = GetOriginRevisionOnBranch(Helpers, RelativeFileName, Errors);
+	if (!ensure(Revision.IsValid()))
+	{
+		return;
+	}
+
+	FString TempFileName;
+	if (!Revision->Get(TempFileName))
+	{
+		return;
+	}
+
+	// Try and load that package
+	UPackage* TempPackage = LoadPackage(nullptr, *TempFileName, LOAD_ForDiff | LOAD_DisableCompileOnLoad);
+	if (!TempPackage)
+	{
+		return;
+	}
+
+	// Grab the old asset from that old package
+	UObject* OldObject = FindObject<UObject>(TempPackage, *InPackageName);
+	if (!OldObject)
+	{
+		return;
+	}
+
+	/* Set the revision information*/
+	FRevisionInfo OldRevision;
+	OldRevision.Changelist = Revision->GetCheckInIdentifier();
+	OldRevision.Date = Revision->GetDate();
+	OldRevision.Revision = Revision->GetRevision();
+
+	FRevisionInfo NewRevision;
+	NewRevision.Revision = TEXT("");
+
+	const FAssetToolsModule& AssetToolsModule = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools");
+	AssetToolsModule.Get().DiffAssets(OldObject, InObject, OldRevision, NewRevision);
 }
 
-IMPLEMENT_MODULE( FGitLFSSourceControlModule, GitLFSSourceControl );
+TSharedPtr<ISourceControlRevision> FGitLFSSourceControlModule::GetOriginRevisionOnBranch(
+	const FGitLFSCommandHelpers& Helpers,
+	const FString& RelativeFileName,
+	TArray<FString>& OutErrorMessages)
+{
+	TArray<TSharedRef<FGitLFSSourceControlRevision>> History;
+
+	TArray<FString> Output;
+	if (Helpers.RunShow(Output, OutErrorMessages))
+	{
+		FGitLFSSourceControlUtils::ParseLogResults(Output, History);
+	}
+
+	if (History.Num() == 0)
+	{
+		return nullptr;
+	}
+
+	FString AbsoluteFileName = FPaths::ConvertRelativePathToFull(RelativeFileName);
+	AbsoluteFileName.RemoveFromStart(Helpers.GetRepositoryRoot());
+
+	if (AbsoluteFileName[0] == '/')
+	{
+		AbsoluteFileName.RemoveAt(0);
+	}
+
+	History[0]->Filename = AbsoluteFileName;
+
+	return History[0];
+}
+
+IMPLEMENT_MODULE(FGitLFSSourceControlModule, GitLFSSourceControl);
 
 #undef LOCTEXT_NAMESPACE
