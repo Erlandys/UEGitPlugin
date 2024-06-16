@@ -59,9 +59,9 @@ public:
 	ECommandResult::Type ReturnResults();
 
 	template<typename T>
-	T& GetOperation()
+	TSharedRef<T> GetOperation()
 	{
-		return *StaticCastSharedRef<T>(Operation);
+		return StaticCastSharedRef<T>(Operation);
 	}
 
 public:

@@ -16,7 +16,7 @@
 	"Modules": [
 		{
 			"Name": "GitLFSSourceControl",
-			"Type": "UncookedOnly",
+			"Type": "Editor",
 			"LoadingPhase": "Default"
 		}
 	]

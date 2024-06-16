@@ -21,8 +21,8 @@ bool FGitLFSFetchWorker::Execute(FGitLFSSourceControlCommand& Command, FGitLFSCo
 		return false;
 	}
 
-	const FGitLFSFetchOperation& Operation = Command.GetOperation<FGitLFSFetchOperation>();
-	if (Operation.bUpdateStatus)
+	TSharedRef<FGitLFSFetchOperation> Operation = Command.GetOperation<FGitLFSFetchOperation>();
+	if (Operation->bUpdateStatus)
 	{
 		// Now update the status of all our files
 		const TArray<FString> ProjectDirs

@@ -58,6 +58,11 @@ void FGitLFSSourceControlCommand::UpdateRepositoryRootIfSubmodule(const TArray<F
 	for (const FString& FilePath : AbsoluteFilePaths)
 	{
 		FString TestPath = FilePath;
+		if (!TestPath.StartsWith(PathToRepositoryRoot))
+		{
+			continue;
+		}
+
 		while (!FPaths::IsSamePath(TestPath, PathToRepositoryRoot))
 		{
 			// Iterating over path directories, looking for .git

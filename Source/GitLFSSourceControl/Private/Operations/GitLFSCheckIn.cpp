@@ -17,11 +17,11 @@
 
 bool FGitLFSCheckInWorker::Execute(FGitLFSSourceControlCommand& Command, FGitLFSCommandHelpers& Helpers)
 {
-	FCheckIn& Operation = Command.GetOperation<FCheckIn>();
+	TSharedRef<FCheckIn> Operation = Command.GetOperation<FCheckIn>();
 
 	// make a temp file to place our commit message in
 	bool bDoCommit = Command.Files.Num() > 0;
-	const FText& CommitMsg = bDoCommit ? Operation.GetDescription() : FText();
+	const FText& CommitMsg = bDoCommit ? Operation->GetDescription() : FText();
 	FGitLFSScopedTempFile CommitMsgFile(CommitMsg);
 	if (CommitMsgFile.GetFilename().Len() > 0)
 	{
@@ -53,7 +53,7 @@ bool FGitLFSCheckInWorker::Execute(FGitLFSSourceControlCommand& Command, FGitLFS
 					Provider->RemoveFileFromCache(State->GetFilename());
 				}
 			}
-			Operation.SetSuccessMessage(ParseCommitResults(Command.ResultInfo.InfoMessages));
+			Operation->SetSuccessMessage(ParseCommitResults(Command.ResultInfo.InfoMessages));
 
 			const FString& Message = Command.ResultInfo.InfoMessages.Num() > 0 ? Command.ResultInfo.InfoMessages[0] : TEXT("");
 			UE_LOG(LogSourceControl, Log, TEXT("commit successful: %s"), *Message);

@@ -16,7 +16,7 @@
 bool FGitLFSConnectWorker::Execute(FGitLFSSourceControlCommand& Command, FGitLFSCommandHelpers& Helpers)
 {
 	// The connect worker checks if we are connected to the remote server.
-	FConnect& Operation = Command.GetOperation<FConnect>();
+	TSharedRef<FConnect> Operation = Command.GetOperation<FConnect>();
 
 	// Skip login operations, since Git does not have to login.
 	// It's not a big deal for async commands though, so let those go through.
@@ -37,7 +37,7 @@ bool FGitLFSConnectWorker::Execute(FGitLFSSourceControlCommand& Command, FGitLFS
 	{
 		const FText& NotFound = LOCTEXT("GitNotFound", "Failed to enable Git revision control. You need to install Git and ensure the plugin has a valid path to the git executable.");
 		Command.ResultInfo.ErrorMessages.Add(NotFound.ToString());
-		Operation.SetErrorText(NotFound);
+		Operation->SetErrorText(NotFound);
 		Command.bCommandSuccessful = false;
 		return false;
 	}
@@ -57,7 +57,7 @@ bool FGitLFSConnectWorker::Execute(FGitLFSSourceControlCommand& Command, FGitLFS
 	{
 		const FText& NotFound = LOCTEXT("GitRemoteFailed", "Failed Git remote connection. Ensure your repo is initialized, and check your connection to the Git host.");
 		Command.ResultInfo.ErrorMessages.Add(NotFound.ToString());
-		Operation.SetErrorText(NotFound);
+		Operation->SetErrorText(NotFound);
 	}
 
 	// TODO: always return true, and enter an offline mode if could not connect to remote

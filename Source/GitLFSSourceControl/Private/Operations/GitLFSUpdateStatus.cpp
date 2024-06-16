@@ -13,7 +13,7 @@
 
 bool FGitLFSUpdateStatusWorker::Execute(FGitLFSSourceControlCommand& Command, FGitLFSCommandHelpers& Helpers)
 {
-	const FUpdateStatus& Operation = Command.GetOperation<FUpdateStatus>();
+	TSharedRef<FUpdateStatus> Operation = Command.GetOperation<FUpdateStatus>();
 
 	Command.bCommandSuccessful = true;
 
@@ -22,7 +22,7 @@ bool FGitLFSUpdateStatusWorker::Execute(FGitLFSSourceControlCommand& Command, FG
 		TMap<FString, FGitLFSSourceControlState> UpdatedStates;
 		Command.bCommandSuccessful = FGitLFSSourceControlUtils::RunUpdateStatus(Command, Command.Files, Command.ResultInfo.ErrorMessages, States, &UpdatedStates);
 		if (Command.bCommandSuccessful &&
-			Operation.ShouldUpdateHistory())
+			Operation->ShouldUpdateHistory())
 		{
 			for (const auto& It : UpdatedStates)
 			{
